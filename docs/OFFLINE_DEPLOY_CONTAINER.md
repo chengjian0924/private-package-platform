@@ -2,14 +2,14 @@
 
 ## 0. 适用范围与已验证环境
 
-下表是 **arm64 实测**记录；amd64 配置（`docker/amd64/`）与之对称，未在 x86 目标机实测。两种架构的 compose 命令均可用 `./scripts/docker-build.sh <ARCH>` 统一入口执行。
+下表是 **arm64 实测**记录。amd64 镜像已实际构建（2026-11-19，在 Apple Silicon 构建机上经 buildx + Rosetta 交叉构建）并通过容器冒烟验证（容器 healthy、health 端点正常）；尚未在真实 x86 目标机上部署过，目标机首次部署按第 4 节执行即可。两种架构的 compose 命令均可用 `./scripts/docker-build.sh <ARCH>` 统一入口执行。
 
 | 项 | 本次实测值 |
 | --- | --- |
-| 目标架构 | `linux/arm64`（aarch64）；amd64 配置同目录结构提供，未实测 |
+| 目标架构 | `linux/arm64`（aarch64）与 `linux/amd64`（x86_64），离线包双架构齐备 |
 | Docker Engine | 29.7.2（要求 ≥ 24） |
 | Docker Compose | **2.10.2**（已在本地用该版本二进制实测全流程） |
-| 应用镜像 | `yuanjian:arm64`，arm64，导出归档 311 MB（amd64 对应 `yuanjian:amd64`） |
+| 应用镜像 | `yuanjian:arm64`（90 MB gzip）/ `yuanjian:amd64`（91 MB gzip），均为单架构镜像 |
 | 进程形态 | console / npm / pypi 三容器拆分，HTTP 三端口直连 |
 | 网关 | `deploy/nginx-container.conf` 预留但**默认不启用**（无证书时启动会失败，属预期） |
 
@@ -29,22 +29,24 @@
 
 ```
 dist-offline/
-├── MANIFEST.sha256                    # SHA-256 校验和
+├── MANIFEST.sha256                    # SHA-256 校验和（双架构归档一并登记）
 └── images/
-    ├── yuanjian-arm64.tar             # arm64 应用镜像
-    └── yuanjian-amd64.tar             # amd64 应用镜像（按需构建）
+    ├── yuanjian-arm64.tar.gz          # arm64 应用镜像（gzip 压缩）
+    └── yuanjian-amd64.tar.gz          # amd64 应用镜像（gzip 压缩）
 ```
+
+> `docker load` 原生支持 gzip 压缩归档，无需先解压。目标机只需拷贝**与本机架构一致**的那一个归档，另一个可留在构建机。
 
 > 网关镜像 `nginx:1.27-alpine` 未纳入离线包，因为当前不启用。若后续要切网关模式，需在联网机上按目标架构 `docker pull --platform <架构> nginx:1.27-alpine` 后同样 `docker save` 导出并传入。
 
 ## 1. 传输与校验
 
-把项目目录（含 `dist-offline/`、`docker/<ARCH>/`、`deploy/`）整体拷到目标机。在目标机校验归档完整性（下例为 arm64，amd64 把文件名换成 `yuanjian-amd64.tar`）：
+把项目目录（含 `dist-offline/`、`docker/<ARCH>/`、`deploy/`）整体拷到目标机。在目标机校验归档完整性（MANIFEST 登记了两个架构的归档，本机架构那条输出 OK 即可，另一条因文件未拷贝会提示 No such file，忽略）：
 
 ```bash
 cd /opt/yuanjian/dist-offline
 sha256sum -c MANIFEST.sha256
-# 预期输出：images/yuanjian-arm64.tar: OK
+# 预期输出（arm64 目标机示例）：images/yuanjian-arm64.tar.gz: OK
 ```
 
 校验失败说明传输损坏，**禁止继续部署**。
@@ -56,11 +58,11 @@ sha256sum -c MANIFEST.sha256
 下例为 arm64；amd64 机器把归档名与 tag 换成 `amd64`：
 
 ```bash
-docker load -i dist-offline/images/yuanjian-arm64.tar
+docker load -i dist-offline/images/yuanjian-arm64.tar.gz
 docker images yuanjian:arm64
 # 确认 ARCH 与目标架构一致
 docker image inspect yuanjian:arm64 --format '{{.Repository}}:{{.Tag}} {{.Architecture}}/{{.Os}}'
-# 预期：yuanjian:arm64 arm64/linux
+# 预期：yuanjian:arm64 arm64/linux（amd64 镜像则输出 amd64/linux）
 ```
 
 ## 3. 环境变量配置

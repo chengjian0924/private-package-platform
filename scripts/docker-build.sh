@@ -50,11 +50,16 @@ command -v docker >/dev/null 2>&1 || { echo "未找到 docker 命令" >&2; exit 
 
 case "$ACTION" in
   build)
-    echo "==> 构建 $PLATFORM 镜像 $TAG（上下文: $ROOT）"
-    DOCKER_BUILDKIT=0 docker build --platform "$PLATFORM" -f "$DOCKERFILE" -t "$TAG" "$ROOT" "$@"
+    echo "==> 构建 ${PLATFORM} 镜像 ${TAG}（上下文: ${ROOT}）"
+    # 跨架构构建必须走 buildx：经典构建器无法解析跨平台 manifest list
+    # （会报 "image found but its platform ... does not match"）。
+    # buildx 默认状态目录 ~/.docker/buildx 在部分宿主上写入受限，重定向到可写目录。
+    BUILDX_CONFIG="${BUILDX_CONFIG:-${TMPDIR:-/tmp}/yj-buildx}"
+    mkdir -p "$BUILDX_CONFIG"
+    docker buildx build --platform "$PLATFORM" -f "$DOCKERFILE" -t "$TAG" --load "$ROOT" "$@"
     ;;
   up)
-    echo "==> 启动 $PLATFORM 编排（compose: $COMPOSE）"
+    echo "==> 启动 ${PLATFORM} 编排（compose: ${COMPOSE}）"
     docker compose -f "$COMPOSE" up -d --build "$@"
     ;;
   down)

@@ -43,12 +43,15 @@ docker/
 
 # 导出镜像（产出 dist-offline/images/yuanjian-<arch>.tar.gz）
 ./scripts/docker-build.sh arm64 save
+./scripts/docker-build.sh amd64 save
 
 # 核验镜像架构
 ./scripts/docker-build.sh arm64 inspect
 ```
 
-`inspect` 应输出与目标一致的 `Arch=arm64` 或 `Arch=amd64`。
+`inspect` 应输出与目标一致的 `Arch=arm64` 或 `Arch=amd64`。两个架构的离线镜像均已实际导出（`dist-offline/images/`，MANIFEST.sha256 登记双架构校验和）；amd64 镜像在 Apple Silicon 上经 buildx + Rosetta 交叉构建并冒烟验证通过。
+
+跨架构构建由脚本统一走 buildx（经典构建器无法解析跨平台 manifest list），buildx 状态目录默认重定向到 `/tmp/yj-buildx`，规避 `~/.docker/buildx` 写入受限的宿主；如需自定义，设置 `BUILDX_CONFIG` 环境变量即可。
 
 ## 直接用 Docker 命令
 

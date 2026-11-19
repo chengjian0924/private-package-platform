@@ -316,5 +316,5 @@ for p in 3000 3001 3002; do curl -fsS "http://$HOST:$p/api/v1/health" >/dev/null
 - 单主机部署：SQLite WAL 跨主机文件锁不可靠，不支持 swarm/K8s 多副本共享同一卷。
 - HTTP 直连：登录态与令牌在内网明文传输，依赖网络隔离；切网关模式可消除该风险。
 - 网关配置预留但未验收：当前交付只保证直连形态；启用网关前需按第 7 节重新走一遍验收清单。
-- 双架构兼容性基于静态核对：两种基础镜像 tag 均有对应变体、依赖无原生编译、平台已显式锁定。arm64 镜像曾在本机实测构建成功（本机即 arm64）；amd64 镜像**未在 x86 Docker daemon 上实机 build/run**，目标机首次部署按第 4 节执行，并用 `./scripts/docker-build.sh "$ARCH" inspect` 确认输出与目标一致。
-- 异构交叉构建依赖 binfmt/QEMU，未在两套架构互交叉的方向上实机验证；静态校验已覆盖 compose 语法、`platform` 声明、脚本参数与运行时关键项。
+- 双架构兼容性基于静态核对：两种基础镜像 tag 均有对应变体、依赖无原生编译、平台已显式锁定。arm64 镜像曾在本机实测构建成功（本机即 arm64）；amd64 镜像已实际构建（在 Apple Silicon 上经 buildx + Rosetta 交叉构建）并通过容器冒烟验证（容器 healthy、health 端点正常、`docker image inspect` 确认 `Arch=amd64`），但**尚未在真实 x86 目标机上部署过**，目标机首次部署按第 4 节执行，并用 `./scripts/docker-build.sh "$ARCH" inspect` 确认输出与目标一致。
+- 跨架构交叉构建已实测单向可用：arm64 构建机 → amd64 镜像（buildx + Rosetta 模拟，构建约 1 分钟）。反向（x86 机构建 arm64）依赖 binfmt/QEMU，未实机验证。构建统一入口已固定走 buildx，其状态目录默认重定向到 `/tmp/yj-buildx`，规避 `~/.docker/buildx` 写入受限的宿主环境。
