@@ -1,12 +1,15 @@
-# 源鉴 · 内网依赖安全治理平台 容器镜像
+# 源鉴 · 内网依赖安全治理平台 容器镜像（arm64 / aarch64）
 # 两阶段构建：编译阶段装全量依赖，运行阶段只保留生产依赖
 # 基础镜像要求 Node >= 22.5（node:sqlite 内置模块），与 package.json engines 一致
-# 目标架构：linux/arm64（aarch64）。node 官方镜像与 nginx 均提供 arm64 变体。
-
+#
+# 构建上下文必须是项目根目录（本 Dockerfile 的 COPY 路径均相对于根目录）：
+#   docker build -f docker/arm64/Dockerfile --platform linux/arm64 -t yuanjian:arm64 .
+# 同目录 docker-compose.yml 已封装 context / dockerfile，常规用法见 docker/README.md。
+#
 # buildx 自动注入这两个参数；用 BUILDPLATFORM 跑构建工具、TARGETPLATFORM 取目标基础镜像，
 # 保证在 x86 构建机上交叉构建 aarch64 镜像时不会用错架构的依赖产物。
 ARG TARGETPLATFORM=linux/arm64
-ARG BUILDPLATFORM=linux/arm64
+ARG BUILDPLATFORM
 
 # ---------- 阶段 1：编译 ----------
 FROM --platform=$TARGETPLATFORM node:22-bookworm-slim AS builder

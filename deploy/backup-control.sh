@@ -14,7 +14,10 @@
 set -u
 
 # ---------- 可配置项 ----------
-YJ_IMAGE="${YJ_IMAGE:-yuanjian:local}"
+# 镜像 tag 带架构后缀，必须与目标机一致：arm64（默认）或 amd64。
+# 非默认架构请设置 YJ_ARCH=amd64，或直接覆盖 YJ_IMAGE。
+YJ_ARCH="${YJ_ARCH:-arm64}"
+YJ_IMAGE="${YJ_IMAGE:-yuanjian:${YJ_ARCH}}"
 YJ_DATA_VOLUME="${YJ_DATA_VOLUME:-yuanjian_data}"        # compose name=yuanjian → 卷全名 yuanjian_data
 YJ_DATA_DIR="${YJ_DATA_DIR:-/var/lib/yuanjian/data}"      # 容器内数据目录（挂载点）
 YJ_BACKUP_ROOT="${YJ_BACKUP_ROOT:-/srv/yuanjian-backups}" # 宿主备份目录 → 容器 /backups

@@ -1,13 +1,15 @@
-# 源鉴 · 内网离线容器化部署手册（aarch64 / Compose 2.10.2）
+# 源鉴 · 内网离线容器化部署手册（双架构 / Compose 2.10.2）
 
 ## 0. 适用范围与已验证环境
 
+下表是 **arm64 实测**记录；amd64 配置（`docker/amd64/`）与之对称，未在 x86 目标机实测。两种架构的 compose 命令均可用 `./scripts/docker-build.sh <ARCH>` 统一入口执行。
+
 | 项 | 本次实测值 |
 | --- | --- |
-| 目标架构 | `linux/arm64`（aarch64） |
+| 目标架构 | `linux/arm64`（aarch64）；amd64 配置同目录结构提供，未实测 |
 | Docker Engine | 29.7.2（要求 ≥ 24） |
 | Docker Compose | **2.10.2**（已在本地用该版本二进制实测全流程） |
-| 应用镜像 | `yuanjian:local`，arm64，导出归档 311 MB |
+| 应用镜像 | `yuanjian:arm64`，arm64，导出归档 311 MB（amd64 对应 `yuanjian:amd64`） |
 | 进程形态 | console / npm / pypi 三容器拆分，HTTP 三端口直连 |
 | 网关 | `deploy/nginx-container.conf` 预留但**默认不启用**（无证书时启动会失败，属预期） |
 
@@ -15,28 +17,29 @@
 
 | 类别 | 要求 |
 | --- | --- |
-| **必须已装** | Docker Engine ≥ 24、Docker Compose 2.10.2（或兼容的 v2）、aarch64 / arm64 架构 |
+| **必须已装** | Docker Engine ≥ 24、Docker Compose 2.10.2（或兼容的 v2）、与目标镜像一致的 CPU 架构（arm64 或 amd64） |
 | 宿主工具 | `sha256sum`、`tar`（校验归档，系统自带）；备份用的 `cron`/`crontab` **仅可选运维需要**，见第 6 节 |
 | **无需安装** | **Node.js、Python、npm、数据库服务、sqlite3 CLI** |
 
-原因：Node 运行时（含内置 `node:sqlite`）、生产依赖、编译产物 `dist/`、运维脚本与 `sqlite3` CLI **全部固化在 `yuanjian:local` 镜像内**，容器启动、健康检查、备份转储都在容器内执行，宿主不参与任何运行时。Python 在运行期完全不被调用——项目里出现的 `python` 只是 PyPI 包的 `requires_python`、wheel 标签等**兼容性元数据**，由 JS 字符串解析处理，不需要解释器。
+原因：Node 运行时（含内置 `node:sqlite`）、生产依赖、编译产物 `dist/`、运维脚本与 `sqlite3` CLI **全部固化在应用镜像内**（`yuanjian:arm64` 或 `yuanjian:amd64`），容器启动、健康检查、备份转储都在容器内执行，宿主不参与任何运行时。Python 在运行期完全不被调用——项目里出现的 `python` 只是 PyPI 包的 `requires_python`、wheel 标签等**兼容性元数据**，由 JS 字符串解析处理，不需要解释器。
 
 > 只有 `deploy/yuanjian.service` 的**裸机 systemd 部署**才需要宿主安装 Node ≥ 22.5（`ExecStart=/usr/bin/node`）；本离线容器方案不走该路径，因此服务器不装 Node / Python 不影响部署与运行。
 
-离线交付包位于项目 `dist-offline/`：
+离线交付包位于项目 `dist-offline/`（归档名带架构后缀）：
 
 ```
 dist-offline/
 ├── MANIFEST.sha256                    # SHA-256 校验和
 └── images/
-    └── yuanjian-arm64.tar             # 应用镜像（arm64）
+    ├── yuanjian-arm64.tar             # arm64 应用镜像
+    └── yuanjian-amd64.tar             # amd64 应用镜像（按需构建）
 ```
 
-> 网关镜像 `nginx:1.27-alpine` 未纳入离线包，因为当前不启用。若后续要切网关模式，需在联网机上 `docker pull nginx:1.27-alpine` 后同样 `docker save` 导出并传入。
+> 网关镜像 `nginx:1.27-alpine` 未纳入离线包，因为当前不启用。若后续要切网关模式，需在联网机上按目标架构 `docker pull --platform <架构> nginx:1.27-alpine` 后同样 `docker save` 导出并传入。
 
 ## 1. 传输与校验
 
-把项目目录（含 `dist-offline/`、`docker-compose.yml`、`deploy/`）整体拷到目标机。在目标机校验归档完整性：
+把项目目录（含 `dist-offline/`、`docker/<ARCH>/`、`deploy/`）整体拷到目标机。在目标机校验归档完整性（下例为 arm64，amd64 把文件名换成 `yuanjian-amd64.tar`）：
 
 ```bash
 cd /opt/yuanjian/dist-offline
@@ -46,16 +49,18 @@ sha256sum -c MANIFEST.sha256
 
 校验失败说明传输损坏，**禁止继续部署**。
 
-> 上线后要启用备份时，用 `deploy/backup-control.sh`（随 `deploy/` 目录一并交付，一键装 cron + 字典总闸 + 状态记录，用法见第 6 节）。该脚本不进镜像、不参与 `docker compose up -d`，故离线归档与 MANIFEST 不受影响。
+> 上线后要启用备份时，用 `deploy/backup-control.sh`（随 `deploy/` 目录一并交付，一键装 cron + 字典总闸 + 状态记录，用法见第 6 节）。脚本默认用 `yuanjian:arm64` 镜像；amd64 机器需显式设 `YJ_ARCH=amd64`（或直接 `YJ_IMAGE=yuanjian:amd64`），否则会因架构不符报 `exec format error`。该脚本不进镜像、不参与 `docker compose up -d`，故离线归档与 MANIFEST 不受影响。
 
 ## 2. 加载镜像
 
+下例为 arm64；amd64 机器把归档名与 tag 换成 `amd64`：
+
 ```bash
 docker load -i dist-offline/images/yuanjian-arm64.tar
-docker images yuanjian:local
-# 确认 ARCH 为 arm64
-docker image inspect yuanjian:local --format '{{.Repository}}:{{.Tag}} {{.Architecture}}/{{.Os}}'
-# 预期：yuanjian:local arm64/linux
+docker images yuanjian:arm64
+# 确认 ARCH 与目标架构一致
+docker image inspect yuanjian:arm64 --format '{{.Repository}}:{{.Tag}} {{.Architecture}}/{{.Os}}'
+# 预期：yuanjian:arm64 arm64/linux
 ```
 
 ## 3. 环境变量配置
@@ -134,7 +139,7 @@ scrape_configs:
 
 ## 4. 启动与停止
 
-以下命令用 `docker compose`（2.10.2），均在 `docker-compose.yml` 所在目录执行。
+以下命令用 `docker compose`（2.10.2），均在**所选架构目录**（`docker/arm64/` 或 `docker/amd64/`）执行；`./scripts/docker-build.sh <ARCH> up` 可替代 `up -d --build`。
 
 **启动**
 
@@ -265,11 +270,11 @@ sudo /opt/yuanjian/deploy/backup-control.sh disable   # 停用（不动数据）
 
 脚本会在每次备份前读字典 `backup.enabled`：设为 `false` 即跳过备份、已有归档保留；改回 `true` 自动恢复，无需改 cron。重复 `enable` 不会叠加 cron 条目。
 
-等价的手工 crontab（审计转储无一键脚本，仍用手工行）：
+等价的手工 crontab（审计转储无一键脚本，仍用手工行）。下例按 arm64 写；amd64 机器把 `yuanjian:arm64` 换成 `yuanjian:amd64`：
 
 ```cron
-10 2 * * * cd /opt/yuanjian && docker run --rm -v yuanjian_data:/var/lib/yuanjian/data -v /srv/yuanjian-backups:/backups -e DATA_DIR=/var/lib/yuanjian/data -e BACKUP_ROOT=/backups -u 10001:10001 yuanjian:local /app/scripts/backup.sh --prune >> /var/log/yuanjian-backup.log 2>&1
-20 2 * * * cd /opt/yuanjian && docker run --rm -v yuanjian_data:/var/lib/yuanjian/data -v /srv/yuanjian-audit-dump:/dump -e DATA_DIR=/var/lib/yuanjian/data -e AUDIT_DUMP_DIR=/dump -e AUDIT_RETENTION_DAYS=365 -u 10001:10001 yuanjian:local node /app/scripts/audit-dump.mjs >> /var/log/yuanjian-audit-dump.log 2>&1
+10 2 * * * cd /opt/yuanjian && docker run --rm -v yuanjian_data:/var/lib/yuanjian/data -v /srv/yuanjian-backups:/backups -e DATA_DIR=/var/lib/yuanjian/data -e BACKUP_ROOT=/backups -u 10001:10001 yuanjian:arm64 /app/scripts/backup.sh --prune >> /var/log/yuanjian-backup.log 2>&1
+20 2 * * * cd /opt/yuanjian && docker run --rm -v yuanjian_data:/var/lib/yuanjian/data -v /srv/yuanjian-audit-dump:/dump -e DATA_DIR=/var/lib/yuanjian/data -e AUDIT_DUMP_DIR=/dump -e AUDIT_RETENTION_DAYS=365 -u 10001:10001 yuanjian:arm64 node /app/scripts/audit-dump.mjs >> /var/log/yuanjian-audit-dump.log 2>&1
 ```
 
 **必须配成功哨兵监控**：cron 退出码和日志容易被忽略。曾实测发现旧脚本因镜像缺 `rsync` 每天静默失败、零归档却无人察觉。用这条检查"今天有没有新归档"，缺失即告警（接入你的监控/钉钉/邮件）：

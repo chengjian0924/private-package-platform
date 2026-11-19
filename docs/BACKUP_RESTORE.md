@@ -146,11 +146,11 @@ backups/
 sudo /opt/yuanjian/deploy/backup-control.sh enable
 ```
 
-等价的手工 cron（不带字典总闸与状态记录，仅在无法使用脚本时采用）：
+等价的手工 cron（不带字典总闸与状态记录，仅在无法使用脚本时采用）。镜像 tag 必须与目标机架构一致，`yuanjian:arm64` 用于 aarch64，`yuanjian:amd64` 用于 x86_64：
 
 ```cron
-# 每天 02:00 备份并保留 14 天
-0 2 * * * cd /opt/yuanjian && docker run --rm -v yuanjian_data:/var/lib/yuanjian/data -v /srv/yuanjian-backups:/backups -e DATA_DIR=/var/lib/yuanjian/data -e BACKUP_ROOT=/backups -u 10001:10001 yuanjian:local /app/scripts/backup.sh --prune >> /var/log/yuanjian-backup.log 2>&1
+# 每天 02:00 备份并保留 14 天（下例为 arm64）
+0 2 * * * cd /opt/yuanjian && docker run --rm -v yuanjian_data:/var/lib/yuanjian/data -v /srv/yuanjian-backups:/backups -e DATA_DIR=/var/lib/yuanjian/data -e BACKUP_ROOT=/backups -u 10001:10001 yuanjian:arm64 /app/scripts/backup.sh --prune >> /var/log/yuanjian-backup.log 2>&1
 ```
 
 要求：

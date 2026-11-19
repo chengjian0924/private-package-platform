@@ -56,30 +56,39 @@ nginx(gateway profile) ──▶ console + npm + pypi
 ## 2. 前置条件
 
 - Docker Engine ≥ 24 且 Compose v2 插件可用（`docker compose version`）。
-- **目标架构 linux/arm64（aarch64）**。compose 已为所有服务显式声明 `platform: linux/arm64`，Dockerfile 用 `--platform=$TARGETPLATFORM` 取基础镜像；即使构建机是 x86_64，也会交叉构建出 arm64 镜像（需 buildx，且跨架构编译建议配 QEMU）。
+- **支持两种目标架构**：`linux/arm64`（aarch64，配置在 `docker/arm64/`）与 `linux/amd64`（x86_64，配置在 `docker/amd64/`）。两套配置完全对称、互不覆盖；各自的 compose 已为所有服务声明对应 `platform`，镜像 tag 分别为 `yuanjian:arm64` 与 `yuanjian:amd64`。选择依据见 `docker/README.md`。
 - 构建机可访问 npm registry 拉取基础镜像与依赖；运行机可断网，用 `docker save/load` 传入镜像。
 - 宿主机开放 3000/3001/3002 三个内网端口；按内网安全策略限制来源网段。
 - 磁盘：数据卷预留空间不低于业务预期；隔离样本单独卷，便于排除出常规备份。
 
-架构兼容性已核对：`node:22-bookworm-slim` 与 `nginx:1.27-alpine` 均提供 arm64 变体；应用运行时依赖（NestJS、adm-zip、exceljs、tar、semver、rxjs 等）全是纯 JS，无 `node-gyp` 原生编译模块；数据库走 Node 22 内置的 `node:sqlite`，不依赖架构特定的二进制。`fsevents` 仅 macOS 生效，Linux 构建时会被 npm 跳过。
+架构兼容性已核对：`node:22-bookworm-slim` 与 `nginx:1.27-alpine` 均提供 arm64 / amd64 变体；应用运行时依赖（NestJS、adm-zip、exceljs、tar、semver、rxjs 等）全是纯 JS，无 `node-gyp` 原生编译模块；数据库走 Node 22 内置的 `node:sqlite`，不依赖架构特定的二进制。`fsevents` 仅 macOS 生效，Linux 构建时会被 npm 跳过。
 
-**在 arm64 目标机上直接构建（推荐，无需 QEMU）**：
+**在目标机上直接构建（推荐，无需 QEMU）**——把 `ARCH` 换成 `arm64` 或 `amd64`：
 
 ```bash
+./scripts/docker-build.sh "$ARCH" build --no-cache
+./scripts/docker-build.sh "$ARCH" up
+```
+
+等价的 compose 写法（在对应架构目录执行）：
+
+```bash
+cd docker/arm64   # 或 docker/amd64
 docker compose build --no-cache && docker compose up -d
 ```
 
-**在 x86 构建机上交叉构建 arm64 镜像**：
+**在异构构建机上交叉构建**：
 
 ```bash
-docker buildx create --use --name armbuilder       # 首次；需 QEMU 支持非本机架构
-docker buildx build --platform linux/arm64 -t yuanjian:local --load .
-# 再传到目标机
-docker save yuanjian:local | gzip > yuanjian-arm64.tar.gz
-# 目标机：docker load -i yuanjian-arm64.tar.gz && docker compose up -d
+docker buildx create --use --name multiarch      # 首次；需 QEMU 支持非本机架构
+# 以 x86 构建机产出 arm64 镜像为例（上下文必须是项目根，最后的 . 不能省）
+docker buildx build --platform linux/arm64 \
+  -f docker/arm64/Dockerfile -t yuanjian:arm64 --load .
+./scripts/docker-build.sh arm64 save
+# 目标机：docker load -i dist-offline/images/yuanjian-arm64.tar.gz && 启动对应 compose
 ```
 
-> 注意：`docker compose build` 会按 compose 里的 `platform: linux/arm64` 构建，在 x86 机器上同样需要 QEMU。若交叉构建报 `exec format error`，先启用 binfmt/QEMU 或改用上面的 buildx 方案。校验镜像架构：`docker image inspect yuanjian:local --format '{{.Architecture}}'` 应输出 `arm64`。
+> 注意：直接在 compose 目录执行 `docker compose build` 时，会按该目录的 `platform` 构建，在异构机器上同样需要 QEMU。若报 `exec format error`，先启用 binfmt/QEMU。校验镜像架构：`./scripts/docker-build.sh "$ARCH" inspect`，输出应与所选架构一致。
 
 ## 3. 首次配置
 
@@ -109,9 +118,11 @@ docker compose up -d
 
 ## 4. 构建与启动
 
+把 `ARCH` 设为 `arm64` 或 `amd64`（对应 `docker/<ARCH>/`）：
+
 ```bash
-docker compose build --no-cache     # 首次或镜像有变更时
-docker compose up -d                # 后台启动全部默认服务
+./scripts/docker-build.sh "$ARCH" build --no-cache   # 首次或镜像有变更时
+./scripts/docker-build.sh "$ARCH" up                 # 后台启动全部默认服务
 ```
 
 三个服务的健康检查应变为 `healthy`（探针为 `GET /api/v1/health`，三个角色都挂载了该控制器）。`npm`/`pypi` 通过 `depends_on` 等 `console` 健康后才启动，降低首次并发建库时的锁竞争。
@@ -120,7 +131,7 @@ docker compose up -d                # 后台启动全部默认服务
 
 ### 4.1 常用命令速查
 
-以下命令均在 `docker-compose.yml` 所在目录执行。
+以下命令均在所选架构目录（`docker/arm64/` 或 `docker/amd64/`）执行，或用 `-f docker/<ARCH>/docker-compose.yml` 从项目根调用。脚本入口 `./scripts/docker-build.sh <ARCH> up` 可替代 `up -d --build`。
 
 **启动 / 重建**
 
@@ -216,17 +227,17 @@ sudo mkdir -p /srv/yuanjian-backups /srv/yuanjian-audit-dump
 sudo chown 10001:10001 /srv/yuanjian-backups /srv/yuanjian-audit-dump
 ```
 
-crontab（`sudo crontab -e`）：
+crontab（`sudo crontab -e`）。下例按 arm64 部署写（镜像 `yuanjian:arm64`）；amd64 机器把镜像名改为 `yuanjian:amd64`，其余不变：
 
 ```cron
 # 每日 02:10 一致性备份，保留 14 天
-10 2 * * * cd /opt/yuanjian && docker run --rm -v yuanjian_data:/var/lib/yuanjian/data -v /srv/yuanjian-backups:/backups -e DATA_DIR=/var/lib/yuanjian/data -e BACKUP_ROOT=/backups -u 10001:10001 yuanjian:local /app/scripts/backup.sh --prune >> /var/log/yuanjian-backup.log 2>&1
+10 2 * * * cd /opt/yuanjian && docker run --rm -v yuanjian_data:/var/lib/yuanjian/data -v /srv/yuanjian-backups:/backups -e DATA_DIR=/var/lib/yuanjian/data -e BACKUP_ROOT=/backups -u 10001:10001 yuanjian:arm64 /app/scripts/backup.sh --prune >> /var/log/yuanjian-backup.log 2>&1
 
 # 每日 02:20 审计日志转储（留存 ≥180 天，哈希链校验失败时退出码 1 并产出 .BROKEN 文件）
-20 2 * * * cd /opt/yuanjian && docker run --rm -v yuanjian_data:/var/lib/yuanjian/data -v /srv/yuanjian-audit-dump:/dump -e DATA_DIR=/var/lib/yuanjian/data -e AUDIT_DUMP_DIR=/dump -e AUDIT_RETENTION_DAYS=365 -u 10001:10001 yuanjian:local node /app/scripts/audit-dump.mjs >> /var/log/yuanjian-audit-dump.log 2>&1
+20 2 * * * cd /opt/yuanjian && docker run --rm -v yuanjian_data:/var/lib/yuanjian/data -v /srv/yuanjian-audit-dump:/dump -e DATA_DIR=/var/lib/yuanjian/data -e AUDIT_DUMP_DIR=/dump -e AUDIT_RETENTION_DAYS=365 -u 10001:10001 yuanjian:arm64 node /app/scripts/audit-dump.mjs >> /var/log/yuanjian-audit-dump.log 2>&1
 ```
 
-> 卷名带项目前缀：compose 文件声明 `name: yuanjian`，因此 `data` 卷在 Docker 中的全名是 `yuanjian_data`。
+> 临时容器镜像必须与目标机架构一致，否则会报 `exec format error`。卷名带项目前缀：compose 文件声明 `name: yuanjian`，因此 `data` 卷在 Docker 中的全名是 `yuanjian_data`。
 
 > **成功哨兵必配**：cron 退出码易被忽略，须每天检查是否有新归档，缺失即告警。旧脚本曾因镜像缺 `rsync` 静默失败、零归档却无人察觉（已修复为 `cp -a`）：
 > ```bash
@@ -238,14 +249,14 @@ crontab（`sudo crontab -e`）：
 手动恢复（**先停机**，避免恢复过程中有写入）：
 
 ```bash
-docker compose down
+./scripts/docker-build.sh "$ARCH" down     # 或 docker compose down（在架构目录执行）
 docker run --rm \
   -v yuanjian_data:/var/lib/yuanjian/data \
   -v /srv/yuanjian-backups:/backups:ro \
   -u 10001:10001 \
-  yuanjian:local \
+  yuanjian:"$ARCH" \
   /app/scripts/restore.sh /backups/yuanjian-<时间戳>.tar.gz /var/lib/yuanjian/data --force
-docker compose up -d
+./scripts/docker-build.sh "$ARCH" up
 ```
 
 恢复后校验：健康端点 200、审计转储退出码 0、抽查 3 个包的下载哈希与库内记录一致。
@@ -254,11 +265,11 @@ docker compose up -d
 
 1. 把内网 CA 签发的证书放到 `deploy/certs/`（`yuanjian.example.internal.crt` / `.key`），并在 `deploy/nginx-container.conf` 中确认 `server_name` 与证书路径一致。
 2. 修改 `deploy/.env.production`：三个基址改为 `https://<网关域名>`（不带端口），**删除** `ALLOW_INSECURE_BASE_URL=true`。
-3. 修改 `docker-compose.yml`：把三个应用的 `ports` 改为仅本机可见，例如 `127.0.0.1:3000:3000`（网关容器通过内部网络访问 `console:3000`，不依赖宿主映射）。
+3. 修改所选架构的 `docker/<ARCH>/docker-compose.yml`：把三个应用的 `ports` 改为仅本机可见，例如 `127.0.0.1:3000:3000`（网关容器通过内部网络访问 `console:3000`，不依赖宿主映射）。
 4. 启动：
 
 ```bash
-docker compose --profile gateway up -d --build
+./scripts/docker-build.sh "$ARCH" up --profile gateway
 ```
 
 网关按 `/npm/`、`/pypi/`、其余路径分流；`/metrics` 返回 404，Prometheus 应在容器内直连 `console:3000/metrics` 并带 `METRICS_TOKEN`。
@@ -280,10 +291,10 @@ docker compose --profile gateway up -d --build
 
 ```bash
 # 升级前必做备份（见第 6 节）
-docker compose down
+./scripts/docker-build.sh "$ARCH" down
 # 替换镜像：重新构建，或 docker load 新版镜像后改 compose 的 image tag
-docker compose build --no-cache
-docker compose up -d
+./scripts/docker-build.sh "$ARCH" build --no-cache
+./scripts/docker-build.sh "$ARCH" up
 for p in 3000 3001 3002; do curl -fsS "http://$HOST:$p/api/v1/health" >/dev/null && echo "$p ok"; done
 ```
 
@@ -305,5 +316,5 @@ for p in 3000 3001 3002; do curl -fsS "http://$HOST:$p/api/v1/health" >/dev/null
 - 单主机部署：SQLite WAL 跨主机文件锁不可靠，不支持 swarm/K8s 多副本共享同一卷。
 - HTTP 直连：登录态与令牌在内网明文传输，依赖网络隔离；切网关模式可消除该风险。
 - 网关配置预留但未验收：当前交付只保证直连形态；启用网关前需按第 7 节重新走一遍验收清单。
-- aarch64 兼容性基于静态核对：镜像 tag 有 arm64 变体、依赖无原生编译、平台已显式锁定；但**未在真实 arm64 Docker daemon 上实机 build/run**，目标机首次部署按第 4 节执行并用 `docker image inspect --format '{{.Architecture}}'` 确认输出 `arm64`。
-- 本次容器配置在本地无法实机验证（Docker daemon 未运行且无外网），建镜像与起容器需在目标机按第 4 节执行；静态校验已覆盖 compose 语法、`platform` 声明、脚本参数与运行时关键项。
+- 双架构兼容性基于静态核对：两种基础镜像 tag 均有对应变体、依赖无原生编译、平台已显式锁定。arm64 镜像曾在本机实测构建成功（本机即 arm64）；amd64 镜像**未在 x86 Docker daemon 上实机 build/run**，目标机首次部署按第 4 节执行，并用 `./scripts/docker-build.sh "$ARCH" inspect` 确认输出与目标一致。
+- 异构交叉构建依赖 binfmt/QEMU，未在两套架构互交叉的方向上实机验证；静态校验已覆盖 compose 语法、`platform` 声明、脚本参数与运行时关键项。
