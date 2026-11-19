@@ -1,0 +1,40 @@
+# 依赖安装目录
+node_modules/
+
+# 构建产物
+dist/
+dist-offline/
+
+# 运行时数据与隔离区（含包文件、数据库、令牌哈希）
+data/
+
+# 本地环境文件（含口令/令牌，生产样例 .example 除外）
+.env
+.env.*
+!.env.example
+deploy/.env
+deploy/.env.*
+!deploy/.env.production.example
+
+# 证书目录
+deploy/certs/
+
+# 测试/缓存/日志
+coverage/
+*.log
+logs/
+tmp/
+*.tmp
+.cache/
+
+# 编辑器与系统文件
+.DS_Store
+.idea/
+.vscode/
+
+# 工作记录与截图
+.workbuddy/
+.screenshots/
+
+# 历史对话存档（非源码/配置，仅本地留存）
+YUANJIAN_PROJECT_HANDOFF.md

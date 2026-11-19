@@ -1,0 +1,947 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#0b1322" />
+  <meta id="color-scheme" name="color-scheme" content="light" />
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <title>源鉴 · 内网依赖安全治理平台</title>
+  <!-- 主题前置脚本：必须用外链，站点 CSP 为 script-src 'self' 禁止内联脚本。
+       在样式后同步执行，渲染前定好 data-theme，避免夜间模式首次加载闪白。 -->
+  <script src="/theme-init.js"></script>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <!-- 图标 sprite：整站统一 24 栅格线性图标，避免外部图标库与 CDN 依赖 -->
+  <svg class="icon-sprite" aria-hidden="true" focusable="false">
+    <defs>
+      <symbol id="i-brand" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.9 20.4 7.5v9L12 21.1 3.6 16.5v-9z" fill="rgba(255,255,255,0.16)"/><path d="m3.6 7.5 8.4 4.6 8.4-4.6"/><path d="M12 12.1v9"/><path d="m7.9 5.2 8.2 4.5"/></symbol>
+      <symbol id="i-box" viewBox="0 0 24 24"><path d="M21 8.5 12 3 3 8.5v7L12 21l9-5.5v-7Z"/><path d="m3 8.5 9 5.5 9-5.5"/><path d="M12 14v7"/></symbol>
+      <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></symbol>
+      <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3 2.5 20h19L12 3Z"/><path d="M12 10v4"/><path d="M12 17.5h.01"/></symbol>
+      <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 4.5 3 8.4 7 10 4-1.6 7-5.5 7-10V6l-7-3Z"/><path d="m9 12 2 2 4-4"/></symbol>
+      <symbol id="i-logs" viewBox="0 0 24 24"><path d="M5 4h11l3 3v13H5V4Z"/><path d="M8 10h8M8 14h8M8 18h5"/></symbol>
+      <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="12" r="3.5"/><path d="M11.5 12H21"/><path d="M17 12v3M20 12v2"/></symbol>
+      <symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.2"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16.5 5.6a3.2 3.2 0 0 1 0 5.9"/><path d="M18 14a5.5 5.5 0 0 1 4 6"/></symbol>
+      <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></symbol>
+      <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></symbol>
+      <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+      <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></symbol>
+      <symbol id="i-chevron-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7"/></symbol>
+      <symbol id="i-x" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+      <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 8h.01"/></symbol>
+      <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M4 20h16"/></symbol>
+      <symbol id="i-file" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6V3Z"/><path d="M14 3v4h4"/></symbol>
+      <symbol id="i-lock" viewBox="0 0 24 24"><rect x="4.5" y="10" width="15" height="10" rx="2"/><path d="M8 10V7.5a4 4 0 0 1 8 0V10"/></symbol>
+      <symbol id="i-panel" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/><path d="m15 10-2 2 2 2"/></symbol>
+      <symbol id="i-external" viewBox="0 0 24 24"><path d="M14 4h6v6"/><path d="m20 4-9 9"/><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/></symbol>
+      <symbol id="i-filter" viewBox="0 0 24 24"><path d="M4 5h16l-6 7v6l-4 2v-8L4 5Z"/></symbol>
+      <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="M6 7l1 13h10l1-13"/><path d="M10 11v5M14 11v5"/></symbol>
+      <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13l10-6.5-10-6.5Z"/></symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+      <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></symbol>
+      <symbol id="i-logout" viewBox="0 0 24 24"><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3"/><path d="m10 17-5-5 5-5"/><path d="M5 12h11"/></symbol>
+      <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+      <symbol id="i-dict" viewBox="0 0 24 24"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15H6.5A2.5 2.5 0 0 0 4 20.5V5.5Z"/><path d="M4 20.5A2.5 2.5 0 0 1 6.5 18H20v3H6.5"/><path d="M9 8h7M9 12h5"/></symbol>
+    </defs>
+  </svg>
+
+  <!-- 全局请求进度：有任意 API 在途时显示 -->
+  <div id="global-progress" class="progress-bar hidden" aria-hidden="true"></div>
+
+  <!-- 登录页：单卡片居中，保持简洁 -->
+  <div id="login-view" class="login-wrap hidden">
+    <div class="login-card">
+      <div class="login-head">
+        <span class="brand-mark" aria-hidden="true"><svg><use href="#i-brand"></use></svg></span>
+        <div>
+          <h2>源鉴</h2>
+          <p class="login-sub">内网依赖安全治理平台</p>
+        </div>
+      </div>
+      <form id="login-form" class="login-form">
+        <label class="field-label" for="login-username">用户名</label>
+        <input id="login-username" class="input block" name="username" autocomplete="username" placeholder="请输入用户名" required />
+        <label class="field-label" for="login-password">密码</label>
+        <input id="login-password" class="input block" name="password" type="password" autocomplete="current-password" placeholder="请输入密码" required />
+        <button type="submit" id="login-submit" class="btn primary block">登录</button>
+      </form>
+      <p id="login-error" class="login-error hidden" role="alert"></p>
+    </div>
+  </div>
+
+  <div id="app-view" class="layout hidden">
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-head">
+        <div class="brand">
+          <span class="brand-mark small" aria-hidden="true"><svg><use href="#i-brand"></use></svg></span>
+          <span class="brand-text"><b>源鉴</b><small>Private Registry Guard</small></span>
+        </div>
+        <button type="button" id="sidebar-toggle" class="icon-btn sidebar-toggle" title="折叠侧栏" aria-label="折叠侧栏" aria-expanded="true">
+          <svg class="icon"><use href="#i-panel"></use></svg>
+        </button>
+      </div>
+
+      <nav id="nav" aria-label="主导航">
+        <div class="nav-group-label">数据</div>
+        <button type="button" data-view="packages" class="nav-item active" title="包管理">
+          <svg class="icon"><use href="#i-box"></use></svg><span>包管理</span>
+        </button>
+        <button type="button" data-view="import" class="nav-item" title="批量导入">
+          <svg class="icon"><use href="#i-upload"></use></svg><span>批量导入</span>
+        </button>
+        <button type="button" data-view="missing" class="nav-item" title="缺失依赖">
+          <svg class="icon"><use href="#i-alert"></use></svg><span>缺失依赖</span>
+        </button>
+        <div class="nav-group-label">治理</div>
+        <button type="button" data-view="security" class="nav-item" title="安全校验">
+          <svg class="icon"><use href="#i-shield"></use></svg><span>安全校验</span>
+        </button>
+        <button type="button" data-view="audit" class="nav-item" title="审计日志">
+          <svg class="icon"><use href="#i-logs"></use></svg><span>审计日志</span>
+        </button>
+        <div class="nav-group-label">系统</div>
+        <button type="button" data-view="tokens" class="nav-item" title="访问令牌">
+          <svg class="icon"><use href="#i-key"></use></svg><span>访问令牌</span>
+        </button>
+        <button type="button" data-view="users" class="nav-item" title="用户管理">
+          <svg class="icon"><use href="#i-users"></use></svg><span>用户管理</span>
+        </button>
+        <button type="button" data-view="dictionary" class="nav-item" title="字典管理">
+          <svg class="icon"><use href="#i-dict"></use></svg><span>字典管理</span>
+        </button>
+        <button type="button" data-view="manual" class="nav-item" title="用户手册">
+          <svg class="icon"><use href="#i-info"></use></svg><span>用户手册</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-foot">
+        <div class="user-row">
+          <div id="current-user" class="user-chip"></div>
+          <div class="sidebar-actions">
+            <button type="button" id="pwd-open" class="user-action" title="修改密码" aria-label="修改密码">
+              <svg class="icon"><use href="#i-lock"></use></svg>
+            </button>
+            <button type="button" id="logout-btn" class="user-action" title="退出登录" aria-label="退出登录">
+              <svg class="icon"><use href="#i-logout"></use></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div class="topbar-main">
+          <h1 id="view-title">包管理</h1>
+        </div>
+        <div class="topbar-actions">
+          <button type="button" id="theme-toggle" class="btn icon-only theme-toggle" title="切换日间/夜间主题" aria-label="切换日间/夜间主题" aria-pressed="false">
+            <svg class="icon icon-moon"><use href="#i-moon"></use></svg>
+            <svg class="icon icon-sun"><use href="#i-sun"></use></svg>
+          </button>
+          <button type="button" id="view-refresh" class="btn icon-text" title="刷新当前视图（快捷键 R）">
+            <svg class="icon"><use href="#i-refresh"></use></svg><span>刷新</span><kbd>R</kbd>
+          </button>
+        </div>
+      </header>
+
+      <!-- 包管理 -->
+      <section id="view-packages" class="view">
+        <div class="toolbar">
+          <div class="search-field">
+            <svg class="icon search-icon"><use href="#i-search"></use></svg>
+            <input id="pkg-search" class="input" placeholder="搜索包名…" aria-label="按包名搜索" />
+            <button type="button" class="field-clear hidden" data-clear="pkg-search" aria-label="清空搜索">
+              <svg class="icon"><use href="#i-x"></use></svg>
+            </button>
+          </div>
+          <select id="pkg-ecosystem" class="input narrow" aria-label="按生态筛选">
+            <option value="">全部生态</option>
+            <option value="npm">npm</option>
+            <option value="pypi">PyPI</option>
+          </select>
+          <label class="check-field" title="显示已删除的版本，便于恢复">
+            <input type="checkbox" id="pkg-include-deleted" />
+            <span>含已删除</span>
+          </label>
+          <button type="button" class="btn ghost" data-reset="packages">
+            <svg class="icon"><use href="#i-filter"></use></svg>重置筛选
+          </button>
+        </div>
+        <div class="card">
+          <div id="pkg-list" class="pkg-list"></div>
+          <div id="pkg-empty" class="empty hidden">暂无已入库的包，可通过「批量导入」或 CLI 上传。</div>
+          <div id="pkg-pager" class="pager hidden"></div>
+        </div>
+      </section>
+
+      <!-- 批量导入 -->
+      <section id="view-import" class="view hidden">
+        <div class="steps" id="import-steps">
+          <div class="step active" data-step="1"><span>1</span><b>上传包文件</b></div>
+          <div class="step" data-step="2"><span>2</span><b>全量校验</b></div>
+          <div class="step" data-step="3"><span>3</span><b>批量入库</b></div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <h3>上传包文件</h3>
+            <span id="batch-id" class="badge hidden"></span>
+            <span class="badge">自动识别包名与版本</span>
+          </div>
+          <div class="dropzone" id="auto-drop" role="button" tabindex="0" aria-label="选择包文件">
+            <input type="file" id="auto-files" accept=".tgz,.whl,.tar.gz,.zip" multiple hidden />
+            <span class="dropzone-icon"><svg class="icon"><use href="#i-upload"></use></svg></span>
+            <b>点击选择或拖拽包文件</b>
+            <small>支持 .tgz / .whl / .tar.gz / .zip（zip 自动解压），可多选</small>
+          </div>
+          <button type="button" id="auto-upload" class="btn primary">
+            <svg class="icon"><use href="#i-upload"></use></svg><span id="auto-upload-text">上传并自动识别</span>
+          </button>
+          <div id="auto-result" class="preview hidden"></div>
+        </div>
+
+        <div class="card" id="import-commit-card">
+          <div class="card-head">
+            <h3>全量校验&amp;入库</h3>
+            <div class="row">
+              <select id="commit-mode" class="input narrow" aria-label="入库模式">
+                <option value="partial">partial（跳过失败项）</option>
+                <option value="strict">strict（有失败即中止）</option>
+              </select>
+              <button type="button" id="validate-btn" class="btn">
+                <svg class="icon"><use href="#i-shield"></use></svg>开始校验
+              </button>
+              <button type="button" id="commit-btn" class="btn primary" disabled>
+                <svg class="icon"><use href="#i-check"></use></svg>批量入库
+              </button>
+              <a id="report-link" class="btn ghost hidden" target="_blank" rel="noopener">
+                <svg class="icon"><use href="#i-download"></use></svg>下载报告
+              </a>
+            </div>
+          </div>
+          <div id="import-summary" class="summary hidden"></div>
+          <div class="table-wrap">
+            <table class="table" id="import-items">
+              <thead><tr><th>#</th><th>包名</th><th>版本</th><th>生态</th><th>状态</th><th>校验结果</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <div id="import-empty" class="empty">上传包文件后，这里会展示逐条校验结果。</div>
+        </div>
+      </section>
+
+      <!-- 缺失依赖 -->
+      <section id="view-missing" class="view hidden">
+        <div class="toolbar">
+          <select id="missing-status" class="input narrow" aria-label="按状态筛选">
+            <option value="">全部状态</option>
+            <option value="open">待补充</option>
+            <option value="resolved">已解决</option>
+          </select>
+          <select id="missing-ecosystem" class="input narrow" aria-label="按生态筛选">
+            <option value="">全部生态</option>
+            <option value="npm">npm</option>
+            <option value="pypi">PyPI</option>
+          </select>
+          <select id="missing-source" class="input narrow" aria-label="按来源筛选">
+            <option value="">全部来源</option>
+            <option value="registry">拉取失败自动上报</option>
+            <option value="ci">项目上报</option>
+            <option value="import">批量导入</option>
+          </select>
+          <button type="button" id="missing-refresh" class="btn">
+            <svg class="icon"><use href="#i-refresh"></use></svg>刷新
+          </button>
+          <button type="button" class="btn ghost" data-reset="missing">
+            <svg class="icon"><use href="#i-filter"></use></svg>重置筛选
+          </button>
+        </div>
+        <div class="card">
+          <div class="card-head">
+            <h3>缺失依赖记录</h3>
+          </div>
+          <div class="table-wrap">
+            <table class="table" id="missing-table">
+              <thead><tr><th>包名</th><th>生态</th><th>版本要求</th><th>来源</th><th>来源项目 / 请求方</th><th>命中次数</th><th>状态</th><th></th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <div id="missing-empty" class="empty hidden">暂无缺失依赖记录。</div>
+          <div id="missing-pager" class="pager hidden"></div>
+        </div>
+      </section>
+
+      <!-- 安全校验 -->
+      <section id="view-security" class="view hidden">
+        <div id="sec-overview" class="sec-cards"></div>
+
+        <div class="card">
+          <div class="card-head">
+            <h3>校验记录</h3>
+          </div>
+          <div class="toolbar flush">
+            <div class="search-field compact">
+              <svg class="icon search-icon"><use href="#i-search"></use></svg>
+              <input id="sec-name" class="input" placeholder="按包名精确筛选…" aria-label="按包名筛选校验记录" />
+              <button type="button" class="field-clear hidden" data-clear="sec-name" aria-label="清空搜索">
+                <svg class="icon"><use href="#i-x"></use></svg>
+              </button>
+            </div>
+            <select id="sec-ecosystem" class="input narrow" aria-label="按生态筛选">
+              <option value="">全部生态</option>
+              <option value="npm">npm</option>
+              <option value="pypi">PyPI</option>
+            </select>
+            <select id="sec-disposition" class="input narrow" aria-label="按处置结果筛选">
+              <option value="">全部处置</option>
+              <option value="ALLOW">ALLOW 通过</option>
+              <option value="WARN">WARN 告警</option>
+              <option value="QUARANTINE">QUARANTINE 隔离</option>
+              <option value="BLOCK">BLOCK 拦截</option>
+            </select>
+            <button type="button" id="sec-refresh" class="btn">查询</button>
+            <button type="button" class="btn ghost" data-reset="security">
+              <svg class="icon"><use href="#i-filter"></use></svg>重置
+            </button>
+            <div class="spacer"></div>
+            <button type="button" id="sec-rescan" class="btn primary">
+              <svg class="icon"><use href="#i-play"></use></svg>立即全量复检
+            </button>
+          </div>
+          <div class="table-wrap">
+            <table class="table" id="sec-table">
+              <thead><tr><th>时间</th><th>包</th><th>生态</th><th>结论</th><th>处置</th><th>风险分</th><th>签名</th><th>触发</th><th></th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <div id="sec-empty" class="empty hidden">暂无安全校验记录。</div>
+          <div id="sec-pager" class="pager hidden"></div>
+        </div>
+
+        <div class="grid-2">
+          <div class="card sec-quarantine-card">
+            <div class="card-head"><h3>隔离区待复核</h3><span id="sec-quarantine-count" class="badge"></span></div>
+            <div class="table-wrap">
+              <table class="table" id="sec-quarantine-table">
+                <thead><tr><th>包 / 版本</th><th>结论</th><th>时间</th><th></th></tr></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+            <div id="sec-quarantine-empty" class="empty hidden">隔离区为空。</div>
+            <div id="sec-quarantine-pager" class="pager hidden"></div>
+          </div>
+
+          <div class="card sec-advisory-card">
+            <div class="card-head"><h3>漏洞库同步</h3><span id="sec-advisory-count" class="badge"></span></div>
+            <div class="sec-advisory-stats">
+              <div class="sec-stat">
+                <div class="sec-stat-label">最近导入</div>
+                <div class="sec-stat-value" id="sec-advisory-last">尚未导入</div>
+                <div class="sec-stat-sub" id="sec-advisory-source">-</div>
+              </div>
+              <div class="sec-stat">
+                <div class="sec-stat-label">覆盖生态</div>
+                <div class="sec-stat-value" id="sec-advisory-eco">-</div>
+              </div>
+            </div>
+            <div class="sec-sev">
+              <div class="sec-sev-title">严重级别分布</div>
+              <div class="sec-sev-rows" id="sec-advisory-sev"></div>
+            </div>
+            <!-- 底部操作区：与左侧卡片的分页器一样沉到卡底，两卡视觉重心对齐 -->
+            <div class="sec-advisory-foot">
+              <div class="row">
+                <label class="file-picker" id="sec-advisory-picker">
+                  <input type="file" id="sec-advisory-file" accept=".json,application/json" aria-label="选择漏洞库 JSON 文件" />
+                  <svg class="icon" aria-hidden="true"><use href="#i-file"></use></svg>
+                  <span class="file-picker-text">未选择 JSON 文件</span>
+                </label>
+                <button type="button" id="sec-advisory-import" class="btn primary">
+                  <svg class="icon"><use href="#i-upload"></use></svg>导入漏洞库
+                </button>
+              </div>
+              <div id="sec-advisory-result" class="preview hidden"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <h3>漏洞库查询</h3>
+          </div>
+          <div class="toolbar flush">
+            <div class="search-field compact">
+              <svg class="icon search-icon"><use href="#i-search"></use></svg>
+              <input id="adv-search" class="input" placeholder="按包名 / 编号 / 标题搜索…" aria-label="搜索漏洞库" />
+              <button type="button" class="field-clear hidden" data-clear="adv-search" aria-label="清空搜索">
+                <svg class="icon"><use href="#i-x"></use></svg>
+              </button>
+            </div>
+            <select id="adv-ecosystem" class="input narrow" aria-label="按生态筛选">
+              <option value="">全部生态</option>
+              <option value="npm">npm</option>
+              <option value="pypi">PyPI</option>
+              <option value="*">仅跨生态</option>
+            </select>
+            <button type="button" id="adv-refresh" class="btn">查询</button>
+            <button type="button" class="btn ghost" data-reset="advisories">
+              <svg class="icon"><use href="#i-filter"></use></svg>重置
+            </button>
+          </div>
+          <div class="table-wrap">
+            <table class="table" id="adv-table">
+              <thead><tr><th>来源</th><th>编号</th><th>生态</th><th>包名</th><th>影响范围</th><th>级别</th><th>CVSS</th><th>修复版本</th><th>发布时间</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <div id="adv-empty" class="empty hidden">漏洞库为空，可先在上方导入 JSON 快照。</div>
+          <div id="adv-pager" class="pager hidden"></div>
+        </div>
+      </section>
+
+      <!-- 审计日志 -->
+      <section id="view-audit" class="view hidden">
+        <div class="toolbar">
+          <div class="search-field">
+            <svg class="icon search-icon"><use href="#i-search"></use></svg>
+            <input id="audit-action" class="input" placeholder="按动作过滤，如 import.batch.commit" aria-label="按动作过滤" />
+            <button type="button" class="field-clear hidden" data-clear="audit-action" aria-label="清空动作筛选">
+              <svg class="icon"><use href="#i-x"></use></svg>
+            </button>
+          </div>
+          <div class="search-field">
+            <svg class="icon search-icon"><use href="#i-key"></use></svg>
+            <input id="audit-token" class="input" placeholder="按 Token 名过滤（下游项目）" aria-label="按 Token 名过滤" />
+            <button type="button" class="field-clear hidden" data-clear="audit-token" aria-label="清空 Token 筛选">
+              <svg class="icon"><use href="#i-x"></use></svg>
+            </button>
+          </div>
+          <select id="audit-result" class="input narrow" aria-label="按结果筛选">
+            <option value="">全部结果</option>
+            <option value="success">success</option>
+            <option value="failure">failure</option>
+          </select>
+          <button type="button" id="audit-refresh" class="btn">
+            <svg class="icon"><use href="#i-refresh"></use></svg>查询
+          </button>
+          <button type="button" class="btn ghost" data-reset="audit">
+            <svg class="icon"><use href="#i-filter"></use></svg>重置
+          </button>
+          <div class="spacer"></div>
+          <a id="audit-export" class="btn ghost" href="/api/v1/audit-logs?format=csv&pageSize=100" target="_blank" rel="noopener">
+            <svg class="icon"><use href="#i-download"></use></svg>导出 CSV
+          </a>
+        </div>
+        <div class="card">
+          <div class="card-head">
+            <h3>操作记录</h3>
+          </div>
+          <div class="table-wrap">
+            <table class="table" id="audit-table">
+              <thead><tr><th>时间</th><th>操作人</th><th>Token</th><th>动作</th><th>资源</th><th>结果</th><th>traceId</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <div id="audit-empty" class="empty hidden">暂无审计记录。</div>
+          <div id="audit-pager" class="pager hidden"></div>
+        </div>
+      </section>
+
+      <!-- 访问令牌 -->
+      <section id="view-tokens" class="view hidden">
+        <div class="card">
+          <div class="card-head">
+            <h3>创建访问令牌</h3>
+          </div>
+          <div class="row">
+            <div class="search-field">
+              <svg class="icon search-icon"><use href="#i-key"></use></svg>
+              <input id="token-name" class="input" placeholder="令牌名称，如 ci-pipeline" aria-label="令牌名称" />
+            </div>
+            <button type="button" id="token-create" class="btn primary">
+              <svg class="icon"><use href="#i-plus"></use></svg>生成令牌
+            </button>
+          </div>
+          <div id="token-result" class="token-result hidden"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <h3 id="token-list-title">我的访问令牌</h3>
+            <span id="token-list-sub" class="small muted"></span>
+          </div>
+          <!-- 筛选条对所有登录用户可见；「全部/仅我的」范围切换只给管理员 -->
+          <div class="row" id="token-filter-bar">
+            <div class="search-field">
+              <svg class="icon search-icon"><use href="#i-search"></use></svg>
+              <input id="token-filter" class="input" placeholder="按令牌名过滤" aria-label="按令牌名过滤" />
+              <button type="button" class="field-clear hidden" data-clear="token-filter" aria-label="清空令牌筛选">
+                <svg class="icon"><use href="#i-x"></use></svg>
+              </button>
+            </div>
+            <select id="token-status" class="input narrow" aria-label="按令牌状态筛选">
+              <option value="all">全部状态</option>
+              <option value="active" selected>仅有效</option>
+              <option value="revoked">已吊销</option>
+            </select>
+            <select id="token-scope" class="input narrow hidden" aria-label="令牌范围">
+              <option value="all">全部账号</option>
+              <option value="self">仅我的</option>
+            </select>
+          </div>
+          <div class="table-wrap">
+            <table class="table">
+              <thead><tr><th>名称</th><th id="token-owner-th" class="hidden">归属账号</th><th>创建时间</th><th>最近使用</th><th>状态</th><th></th></tr></thead>
+              <tbody id="token-body"></tbody>
+            </table>
+          </div>
+          <div id="token-empty" class="empty hidden">尚无访问令牌。</div>
+          <div id="token-pager" class="pager hidden"></div>
+        </div>
+      </section>
+
+      <!-- 用户管理（仅管理员） -->
+      <section id="view-users" class="view hidden">
+        <div class="card">
+          <div class="card-head">
+            <h3>账号列表</h3>
+            <button type="button" id="user-create-open" class="btn primary small">
+              <svg class="icon"><use href="#i-plus"></use></svg>新建账号
+            </button>
+          </div>
+          <div class="table-wrap">
+            <table class="table" id="users-table">
+              <thead><tr><th>用户名</th><th>显示名</th><th>邮箱</th><th>角色</th><th>状态</th><th>凭据</th><th>最近改密</th><th></th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <div id="users-empty" class="empty hidden">暂无账号。</div>
+          <div id="users-pager" class="pager hidden"></div>
+        </div>
+      </section>
+
+      <!-- 字典管理（仅管理员）：限流与漏洞扫描等运行时配置 -->
+      <section id="view-dictionary" class="view hidden">
+        <div class="toolbar">
+          <span id="dict-status" class="pill muted" title="字典与当前生效配置的同步状态">加载中…</span>
+          <div class="spacer"></div>
+          <button type="button" id="dict-reload" class="btn">
+            <svg class="icon"><use href="#i-refresh"></use></svg>重新加载
+          </button>
+          <button type="button" id="dict-save" class="btn primary" disabled>
+            <svg class="icon"><use href="#i-check"></use></svg>保存配置
+          </button>
+        </div>
+        <div id="dict-groups"></div>
+        <div id="dict-empty" class="empty hidden">暂无字典配置项。</div>
+      </section>
+
+      <!-- 用户手册：所有登录用户可见的静态操作指引 -->
+      <section id="view-manual" class="view hidden manual">
+        <div class="manual-toc card">
+          <div class="card-head"><h3>目录</h3></div>
+          <div class="manual-toc-links" id="manual-toc-links"></div>
+        </div>
+
+        <div class="card manual-sec" id="manual-login" data-manual-title="登录与账号">
+          <div class="card-head"><h3>登录与账号</h3></div>
+          <p class="manual-note"><b>用途</b>：进入控制台，管理自己的登录状态与口令。</p>
+          <p class="manual-note"><b>入口</b>：浏览器打开控制台地址（如 <code>http://&lt;host&gt;:3000/</code>）。</p>
+          <ol class="manual-steps">
+            <li>输入管理员分配的用户名和密码，点「登录」。</li>
+            <li>首次登录或密码被重置后会强制弹出改密窗口，此时<b>无需原密码</b>，填两次新密码保存后才能进入。未完成改密前，所有业务接口返回 <code>AUTH_PASSWORD_CHANGE_REQUIRED</code>。</li>
+            <li>日常自助改密：点侧栏底部锁形图标，<b>必须填写原密码</b>。改密后其它设备上的会话立即失效。</li>
+            <li>退出：点侧栏底部退出图标，当前会话吊销。</li>
+          </ol>
+          <p class="manual-note"><b>注意</b>：口令长度由服务端配置决定，不能包含用户名，也不能是弱口令。连续输错会临时锁定（默认 5 次 / 15 分钟，以实际配置为准）。忘记密码请联系管理员重置。侧栏只显示你有权限的模块，看不到某个入口说明当前角色未授权。</p>
+        </div>
+
+        <div class="card manual-sec" id="manual-access" data-manual-title="安装私有包">
+          <div class="card-head"><h3>安装私有包</h3></div>
+          <p class="manual-note"><b>用途</b>：在项目里用 npm / pip 从私有源安装已入库的包。</p>
+          <p class="manual-note"><b>入口</b>：项目终端。下载包<b>无需登录或令牌</b>，配置好源地址即可。下例 <code>&lt;host&gt;:3000</code> 换成实际部署地址；拆分端口部署时以管理员提供的地址为准。</p>
+          <h4 class="manual-sub">npm —— 安装</h4>
+          <pre class="manual-code"><code># 一次性设置私有源
+npm config set registry http://&lt;host&gt;:3000/npm/
+
+# 在项目里安装
+npm install &lt;package&gt;</code></pre>
+          <p class="manual-expect"><b>预期</b>：提示 added N packages；<code>package-lock.json</code> 中该包的 resolved 地址指向私有源。</p>
+          <h4 class="manual-sub">pip —— 安装</h4>
+          <pre class="manual-code"><code>pip install --index-url http://&lt;host&gt;:3000/pypi/simple/ --trusted-host &lt;host&gt; &lt;package&gt;</code></pre>
+          <p class="manual-expect"><b>预期</b>：终端显示从私有源下载并成功安装。若部署了 HTTPS 网关，可去掉 <code>--trusted-host</code>。</p>
+          <p class="manual-note"><b>注意</b>：<code>--trusted-host</code> 仅用于内网 HTTP 源。仓库支持 wheel 与 sdist，Python 运行时兼容性由 pip 在客户端判定。</p>
+
+          <div data-manual-perm="package:publish">
+            <h4 class="manual-sub">发布包（需发布权限）</h4>
+            <p class="manual-note"><b>入口</b>：项目终端，包目录下执行；命令行的账号密码与控制台相同。</p>
+            <pre class="manual-code"><code># npm：先登录，再发布（package.json 需有 name + version）
+npm login --registry http://&lt;host&gt;:3000/npm/
+npm publish
+
+# PyPI：先打包到 dist/，再上传（按提示输入账号密码）
+twine upload --repository-url http://&lt;host&gt;:3000/pypi/ dist/*</code></pre>
+            <p class="manual-expect"><b>预期</b>：login 提示 Logged in；publish / upload 返回版本信息，包立即出现在「包管理」。未通过安全校验时返回 <code>SEC_BLOCKED</code> / <code>SEC_QUARANTINED</code>。</p>
+            <p class="manual-note"><b>注意</b>：脚本/CI 场景可用访问令牌代替密码，创建与吊销方法见「访问令牌」章节。</p>
+          </div>
+        </div>
+
+        <div class="card manual-sec" id="manual-package" data-manual-title="包管理">
+          <div class="card-head"><h3>包管理</h3></div>
+          <p class="manual-note"><b>用途</b>：查找已入库的包、下载包文件、查看版本状态。</p>
+          <p class="manual-note"><b>入口</b>：侧栏「包管理」。</p>
+          <ol class="manual-steps">
+            <li>在搜索框按包名关键字过滤；用「全部生态」下拉切换 npm / PyPI；点「重置筛选」清空条件。</li>
+            <li>包按名称分组，点分组行展开版本列表。每行显示版本、文件、大小、架构、Python/Node 版本、上传人、安全结论与下载入口。</li>
+            <li>点该行的「下载」获取包文件。只有状态正常的版本提供下载，已隔离和已删除的版本不可下载。</li>
+            <li>勾选「含已删除」可查看已删除版本的记录。已删除版本对所有人生效下架，无法安装。</li>
+          </ol>
+          <p class="manual-expect"><b>预期</b>：搜索即时刷新列表；展开分组才按需加载版本。列表为空时显示空态提示，不会白屏。</p>
+          <div data-manual-perm="security:read">
+            <p class="manual-note"><b>校验详情</b>：版本行的「校验详情」按钮可查看该版本最近一次六维扫描结论与 JSON / CSV 报告。</p>
+          </div>
+          <div data-manual-perm="package:publish">
+            <p class="manual-note"><b>删除与恢复</b>：你上传的版本在展开行提供「删除」；勾选「含已删除」后可对已删除版本点「恢复」。删除是版本级的，不影响同包的其它版本。</p>
+          </div>
+        </div>
+
+        <div class="card manual-sec" id="manual-import" data-manual-title="批量导入" data-manual-perm="import:run">
+          <div class="card-head"><h3>批量导入</h3></div>
+          <p class="manual-note">两步：上传包文件自动识别 → 全量校验 &amp; 入库。支持 <code>.tgz / .whl / .tar.gz / .zip</code>（zip 自动解压），可多选，单文件上限 200 MB。系统从文件名与包内元数据识别包名和版本。</p>
+          <ol class="manual-steps">
+            <li>点「上传包文件」卡片中的虚线框选择或拖入包文件，点「上传并自动识别」。顶部显示批次号，结果区列出识别出的包名、版本与生态。</li>
+            <li>在「全量校验&amp;入库」卡片选择入库模式：<code>partial</code>（跳过失败项，默认）或 <code>strict</code>（有失败即整批中止）。</li>
+            <li>点「开始校验」，表格逐条显示校验结果。校验覆盖：文件完整性/SHA256、版本号合法性（npm semver / PyPI PEP 440）、重复版本、依赖兼容性、运行时目标提示。</li>
+            <li>核对无误后点「批量入库」，成功后提示入库数量，可在「包管理」检索到；点「下载报告」获取 CSV 逐条结果。</li>
+          </ol>
+          <p class="manual-expect"><b>预期：</b>识别后预览区给出包数与新增版本数；校验失败项显示具体原因码；strict 模式存在失败项时整批拒绝并返回 <code>BATCH_HAS_BLOCKING_ITEMS</code>。</p>
+          <p class="manual-note">漏洞扫描关闭时批量导入走快速通道：只做基础校验并直接入库，界面文案变为「上传并直接入库」。</p>
+        </div>
+
+        <div class="card manual-sec" id="manual-missing" data-manual-title="缺失依赖">
+          <div class="card-head"><h3>缺失依赖</h3></div>
+          <p class="manual-note"><b>用途</b>：查看构建脚本上报的缺失依赖，了解哪些包还缺、缺在哪些项目。</p>
+          <p class="manual-note"><b>入口</b>：侧栏「缺失依赖」。平台按「生态 + 包名 + 版本区间」去重，重复上报只累加命中次数。</p>
+          <ol class="manual-steps">
+            <li>用「状态」（待补充 / 已解决）和「生态」下拉过滤记录。</li>
+            <li>列表可查看包名、生态、版本区间、上报项目、命中次数、状态与最近上报时间。</li>
+            <li>需要补包但当前账号没有补包权限时，把包名和版本区间提供给有权限的同事处理。</li>
+          </ol>
+          <p class="manual-expect"><b>预期</b>：过滤即时生效；无匹配记录时显示空态提示。</p>
+
+          <div data-manual-perm="missing:supplement">
+            <h4 class="manual-sub">自助补包（需补包权限）</h4>
+            <ol class="manual-steps">
+              <li>在「待补充」记录右侧点「补充此包」，弹窗中确认包名、按需填版本（PyPI 可填 <code>requires_python</code>），选择包文件后提交。</li>
+              <li>平台自动执行完整性/兼容性校验与六维安全扫描，通过后入库并把记录置为「已解决」。</li>
+            </ol>
+            <p class="manual-expect"><b>预期</b>：记录状态变为「已解决」；校验失败或重复补包返回明确错误（如 <code>MISSING_STATE_INVALID</code>），弹窗保持打开可修正重试。</p>
+          </div>
+
+          <div data-manual-perm="import:run">
+            <h4 class="manual-sub">上报缺失依赖（需导入权限）</h4>
+            <p class="manual-note">在构建脚本中调用接口上报，令牌创建方法见「访问令牌」章节。</p>
+            <pre class="manual-code"><code>curl -X POST http://&lt;host&gt;:3000/api/v1/dependency-reports \
+  -H 'Authorization: Bearer yj_xxx' -H 'Content-Type: application/json' \
+  -d '{"projectId":"order-service","ecosystem":"npm",
+       "dependencies":[{"name":"internal-sdk","versionSpec":"^2.0.0"}]}'</code></pre>
+            <p class="manual-expect"><b>预期</b>：返回成功；同一依赖重复上报只累加 hits，不产生新记录。</p>
+          </div>
+        </div>
+
+        <div class="card manual-sec" id="manual-security" data-manual-title="安全校验" data-manual-perm="security:read">
+          <div class="card-head"><h3>安全校验</h3></div>
+          <p class="manual-note">所有入库路径（npm publish、twine、批量导入、补包）在写入前统一经过六维扫描，未通过不会进入私有源。维度：完整性、恶意代码、已知漏洞、权限风险、敏感信息、行为风险。证据落库前脱敏。</p>
+          <div class="table-wrap"><table class="table"><thead><tr><th>最高风险</th><th>处置</th><th>表现与后续</th></tr></thead><tbody>
+            <tr><td><span class="pill err">critical</span></td><td>BLOCK 拦截</td><td>上传失败，返回 <code>SEC_BLOCKED</code> 与 scanId，包不入库</td></tr>
+            <tr><td><span class="pill warn">high</span></td><td>QUARANTINE 隔离</td><td>返回 <code>SEC_QUARANTINED</code>，进入隔离区等管理员复核</td></tr>
+            <tr><td><span class="pill info">medium</span></td><td>WARN 告警</td><td>允许入库，控制台记录风险提示</td></tr>
+            <tr><td><span class="pill ok">low / 无</span></td><td>ALLOW 通过</td><td>正常入库，生成校验记录与报告</td></tr>
+          </tbody></table></div>
+          <ol class="manual-steps">
+            <li>查看结果：进入「安全校验」，顶部概览卡显示各处置数量；「校验记录」支持按包名精确筛选、按生态与处置过滤，点行尾按钮查看六维详情与 JSON / CSV 报告。</li>
+            <li>隔离区复核（管理员）：在「隔离区待复核」点详情核对风险明细，确认可信后「放行」写回私有源，否则「废弃」清理文件。所有动作写审计。</li>
+            <li>导入漏洞库（管理员）：在「漏洞库同步」选择 JSON 快照（顶层数组或 <code>{"advisories":[...]}</code>），点「导入漏洞库」。每条必须含 <code>source / advisoryId / ecosystem / packageName / affectedRange / severity</code>，还可带 <code>title / fixedVersion / references / publishedAt</code>；ecosystem 只能是 <code>npm</code> / <code>pypi</code> / <code>*</code>（跨生态）。同一 <code>advisoryId</code> 覆盖更新，单文件 ≤ 50 MB，导入结果列出 imported / updated / skipped 与跳过原因。</li>
+            <li>看库状态：漏洞库卡上半部分是两块统计磁贴（最近导入 / 覆盖生态），下方是严重级别分布条形图——排查「这个包为什么从不命中漏洞」，先看库里有没有对应生态与档位的条目。</li>
+            <li>导入后点「立即全量复检」对存量包回溯扫描；命中隔离阈值的版本自动置为隔离。服务端也按配置间隔自动复检。</li>
+          </ol>
+          <p class="manual-expect"><b>预期：</b>导入结果展示 imported/updated/skipped 及跳过原因；空漏洞库时给 WARN 提示而非静默放行，不会阻断入库（除非显式开启强制漏洞库）。「隔离区待复核」与「漏洞库同步」两张卡片始终等高，底部各有一条分隔线。 </p>
+        </div>
+
+        <div class="card manual-sec" id="manual-audit" data-manual-title="审计日志" data-manual-perm="audit:read">
+          <div class="card-head"><h3>审计日志</h3></div>
+          <p class="manual-note"><b>用途</b>：追溯导入、补包、登录等全流程操作记录。</p>
+          <p class="manual-note"><b>入口</b>：侧栏「审计日志」。</p>
+          <ol class="manual-steps">
+            <li>按动作关键字（如 <code>import.batch.commit</code>）、Token 名、结果（success / failure）过滤。</li>
+            <li>列表显示时间、操作人、Token、动作、资源、结果与 traceId；结果列成功绿、失败红。点「导出 CSV」下载当前筛选结果。</li>
+            <li>日志按 <code>prev_hash → hash</code> 组成哈希链，敏感字段脱敏；把 traceId 提供给管理员可关联服务端日志定位同一请求。</li>
+          </ol>
+        </div>
+
+        <div class="card manual-sec" id="manual-users" data-manual-title="用户管理与机器账号" data-manual-perm="user:manage">
+          <div class="card-head"><h3>用户管理与机器账号</h3></div>
+          <p class="manual-note"><b>用途</b>：创建人员账号与 CI 机器账号，分配角色、启停与重置凭据。</p>
+          <p class="manual-note"><b>入口</b>：侧栏「用户管理」。</p>
+          <ol class="manual-steps">
+            <li>「新建账号」填写用户名（3–32 位，字母数字与 <code>._-</code>）、显示名、邮箱，选择账号类型与角色后创建。人员账号初始口令统一为 <code>123123123</code>，只展示一次，对方首次登录须改密。</li>
+            <li>批量建号：点「下载模板」，仅上传 <code>.xlsx</code>；模板前 5 行是填写须知，从第 6 行表头下方开始填写，单次最多 200 行。角色只接受 <code>reader</code> / <code>developer</code>，批量只创建人员账号。</li>
+            <li>角色下拉与「禁用 / 启用」按钮都会先弹二次确认：改角色写明会获得或失去哪些权限，禁用写明会话立即失效、令牌暂时不可用但不会作废。取消后控件自动恢复成服务端真实值。</li>
+            <li>CI 场景选「机器账号」：不设口令、不能登录控制台，创建后自动弹出「签发访问令牌」。之后也可在列表该行点「签发令牌」补发。</li>
+            <li>建议一个仓库建一个机器账号，令牌名用仓库路径（如 <code>ci-group-repo</code>）。令牌明文只显示一次，立即写入流水线密文变量。</li>
+            <li>列表里机器账号带 <code>CI</code> 标签、凭据列显示「仅令牌」；「重置密码」对它不可用，换令牌即可。</li>
+            <li><b>禁用</b>（临时停用）：该账号所有会话立即失效，令牌同时不可用，但凭据仍保留——重新启用后自动恢复，可随时回滚。管理员账号唯一，不提供禁用、改角色与重置密码。</li>
+            <li><b>吊销令牌</b>（永久断开）：离职、凭据泄露或项目下线时，点该行「吊销令牌」，该账号名下所有令牌立即作废且无法恢复，重新启用账号也不会复活，只能重新签发。凭据列会显示每个账号还有几个未吊销令牌，禁用状态下标为橙色。</li>
+          </ol>
+          <p class="manual-note"><b>注意</b>：审计日志按 Token 名筛选，因此令牌命名要能唯一对应项目，否则事后无法归因。</p>
+        </div>
+
+        <div class="card manual-sec" id="manual-token" data-manual-title="访问令牌">
+          <div class="card-head"><h3>访问令牌</h3></div>
+          <p class="manual-note"><b>用途</b>：创建供脚本 / CI 调用接口用的凭证。</p>
+          <p class="manual-note"><b>入口</b>：侧栏「访问令牌」。</p>
+          <ol class="manual-steps">
+            <li>输入名称（如 <code>ci-pipeline</code>），点「生成令牌」，立即复制只显示一次的令牌串。创建页只给当前登录账号签发；管理员要给其他账号（尤其机器账号）签发，到「用户管理」点对应行的「签发令牌」。令牌名建议按仓库命名（如 <code>ci-group-repo</code>），会写入审计日志。</li>
+            <li>列表查看名称、创建时间、最近使用与状态；泄露或不再使用时点「吊销」，弹二次确认并写明令牌名后才会执行，使用该令牌的脚本立即失效。已吊销的令牌会标出原因（<code>手动</code> / <code>批量</code> / <code>管理员</code>），便于事后回溯。</li>
+            <li><b>筛选</b>：可按令牌名过滤，并按状态切「仅有效 / 全部状态 / 已吊销」；<b>默认只看有效令牌</b>，已吊销的留在库里可查但不干扰日常视图。标题右侧显示有效与已吊销的数量。</li>
+            <li><b>可见范围</b>：普通账号只看得到、也只能吊销自己的令牌。管理员额外有「全部账号 / 仅我的」切换，可看到每个令牌的归属账号与账号状态，并代吊销任意账号的令牌——用于离职清理、凭据泄露处置。代吊销同样不可恢复，审计里会记下目标账号。</li>
+          </ol>
+          <p class="manual-note"><b>注意</b>：令牌仅在创建时展示一次，服务端只存哈希，丢失只能重新生成。安装私有包不需要令牌。</p>
+        </div>
+
+        <div class="card manual-sec" id="manual-config" data-manual-title="关键配置项" data-manual-perm="config:manage">
+          <div class="card-head"><h3>关键配置项</h3></div>
+          <p class="manual-note">环境变量是启动基线；「字典管理」（仅管理员）每组只列配置项、当前值与基线，各项含义见下表。保存后即时生效，无需重启，并写入审计。</p>
+          <div class="table-wrap"><table class="table"><thead><tr><th>配置项</th><th>默认</th><th>作用 / 建议值</th></tr></thead><tbody>
+            <tr><td class="mono">PORT / DATA_DIR</td><td>3000 / ./data/dev</td><td>监听端口与数据根目录；生产按部署规划设置</td></tr>
+            <tr><td class="mono">PUBLIC_BASE_URL</td><td>http://localhost:3000</td><td>生成下载/索引地址的基址；生产需与实际访问地址一致</td></tr>
+            <tr><td class="mono">ALLOW_INSECURE_BASE_URL</td><td>false</td><td>生产用 HTTP 直连时才设 true；切回 TLS 网关后必须改回 false</td></tr>
+            <tr><td class="mono">SESSION_TTL_SEC / IDLE</td><td>28800 / 1800</td><td>会话绝对有效期与空闲超时（秒）</td></tr>
+            <tr><td class="mono">PASSWORD_MIN_LENGTH</td><td>随环境</td><td>口令最小长度（开发环境 8）；建号初始口令为随机串</td></tr>
+            <tr><td class="mono">SECURITY_SCAN_ENABLED</td><td>true</td><td>扫描总开关，可运行时改；关闭后上传直接入库，风险自担</td></tr>
+            <tr><td class="mono">SECURITY_BLOCK_SEVERITY</td><td>critical</td><td>达到该等级拦截；调整会改变放行边界，谨慎</td></tr>
+            <tr><td class="mono">SECURITY_QUARANTINE_SEVERITY</td><td>high</td><td>达到该等级进入隔离区待复核</td></tr>
+            <tr><td class="mono">RATE_LIMIT_* </td><td>见字典</td><td>限流开关/窗口/读写上限，可运行时改；多实例部署时阈值按实例数放大</td></tr>
+            <tr><td class="mono">DISK_ALERT_PERCENT / READONLY</td><td>85 / 95</td><td>磁盘水位告警与只读阈值，达到只读后写接口返回 507</td></tr>
+            <tr><td class="mono">QUARANTINE_RETENTION_DAYS</td><td>30</td><td>隔离样本保留天数，超期未复核自动销毁</td></tr>
+            <tr><td class="mono">SECURITY_RESCAN_INTERVAL_SEC</td><td>86400</td><td>存量复检间隔（秒），≤0 关闭定时任务</td></tr>
+            <tr><td class="mono">rateLimit.enabled / windowMs</td><td>true / 60000</td><td>限流总开关与固定窗口长度；关闭后不再按来源 IP + 类别计数</td></tr>
+            <tr><td class="mono">security.requireSignature / requireAdvisoryDb</td><td>false / false</td><td>未签名或验签失败按高危；漏洞库为空按高危，避免虚假 ALLOW</td></tr>
+            <tr><td class="mono">retention.deletedPackageDays / logDays</td><td>30 / 180</td><td>软删除版本与日志的保留天数；0 表示永不自动清理</td></tr>
+            <tr><td class="mono">backup.intervalMinutes</td><td>60</td><td>增量补齐备份的间隔（1–10080 分钟）；关闭只停后续备份，已有备份保留</td></tr>
+            <tr><td class="mono">missing.autoReport</td><td>true</td><td>下游拉取包失败时自动登记缺失依赖（含来源 IP）；关闭只停新增，显式上报接口不受影响</td></tr>
+            <tr><td class="mono">limits.maxNpmUploadBytes / maxPypiUploadBytes</td><td>200 MB</td><td>npm 解包后 / PyPI 单文件大小上限；硬天花板 MAX_*_PUBLISH_BYTES 默认 288 MB，需重启</td></tr>
+          </tbody></table></div>
+        </div>
+
+        <div class="card manual-sec" id="manual-faq" data-manual-title="常见问题">
+          <div class="card-head"><h3>常见问题</h3></div>
+          <div class="table-wrap"><table class="table"><thead><tr><th>现象 / 错误码</th><th>原因</th><th>处理</th></tr></thead><tbody>
+            <tr><td class="mono">AUTH_INVALID_CREDENTIALS</td><td>用户名或密码错误</td><td>核对输入；看提示里的剩余尝试次数</td></tr>
+            <tr><td class="mono">AUTH_ACCOUNT_LOCKED</td><td>连续输错锁定</td><td>等待锁定结束或联系管理员重置密码</td></tr>
+            <tr><td class="mono">AUTH_PASSWORD_CHANGE_REQUIRED</td><td>首登/重置后未改密</td><td>完成强制改密后再操作</td></tr>
+            <tr><td class="mono">AUTH_FORBIDDEN</td><td>当前角色无权限</td><td>联系管理员调整角色；侧栏只显示有权限的模块</td></tr>
+            <tr><td>npm install 报 404 / 找不到包</td><td>registry 未指向私有源，或包名、版本不存在</td><td>用 <code>npm config get registry</code> 核对地址；在「包管理」确认包与版本存在</td></tr>
+            <tr><td>pip 报 SSL / 证书错误</td><td>内网 HTTP 源未信任</td><td>加 <code>--trusted-host &lt;host&gt;</code>，或按部署配置内网 CA</td></tr>
+            <tr><td class="mono">507 写入失败</td><td>磁盘达到只读阈值</td><td>联系管理员清理存储空间后自动恢复</td></tr>
+            <tr data-manual-perm="package:publish"><td class="mono">PKG_VERSION_DUPLICATE</td><td>同包同版本已入库</td><td>升级版本号，或删除旧版本后再传</td></tr>
+            <tr data-manual-perm="package:publish"><td class="mono">PKG_FILE_UNMATCHED</td><td>文件名与清单 file 字段不符</td><td>核对文件名（支持 dist/ 等路径前缀）</td></tr>
+            <tr data-manual-perm="package:publish"><td class="mono">TARGET_UNDECLARED</td><td>JSON 清单缺 targets</td><td>补 targets.node / targets.python</td></tr>
+            <tr data-manual-perm="package:publish"><td class="mono">SEC_BLOCKED / SEC_QUARANTINED</td><td>安全校验命中严重/高危</td><td>按返回 scanId 查看详情与整改建议；隔离包联系管理员复核</td></tr>
+            <tr data-manual-perm="package:publish"><td class="mono">SEC_SCAN_BUSY</td><td>扫描队列已满（上限 50）</td><td>稍后重试，避免并发上传过多</td></tr>
+            <tr data-manual-perm="package:publish"><td>npm login 成功但 publish 401</td><td>.npmrc 的 _auth 未用令牌</td><td>重新 npm login，或手工填「用户名:令牌」的 base64</td></tr>
+            <tr data-manual-perm="import:run"><td class="mono">BATCH_HAS_BLOCKING_ITEMS</td><td>strict 模式下存在校验失败项</td><td>修正失败项后重新校验，或改用 partial 模式</td></tr>
+          </tbody></table></div>
+          <p class="manual-note">所有失败响应都带可读 message 与 traceId；控制台以 <code>[CODE] message（traceId: ...）</code> 提示。排查时把 traceId 提供给管理员，可在服务端日志中检索同一链路。</p>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- 新建账号弹窗：单个创建 + 批量建号合一 -->
+  <div id="user-create-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="user-create-modal-title">
+    <div class="modal-card wide">
+      <div class="modal-head">
+        <div>
+          <p class="eyebrow">用户管理</p>
+          <h3 id="user-create-modal-title">新建账号</h3>
+        </div>
+        <button type="button" class="icon-btn" id="user-create-modal-close" aria-label="关闭">
+          <svg class="icon"><use href="#i-close"></use></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="form-section">
+          <h4 class="form-section-title">单个创建</h4>
+          <div class="row">
+            <input id="user-username" class="input" placeholder="用户名（3-32 位）" aria-label="用户名" />
+            <input id="user-display" class="input" placeholder="显示名（可选）" aria-label="显示名" />
+            <input id="user-email" class="input" placeholder="邮箱（可选）" aria-label="邮箱" />
+          </div>
+          <div class="row">
+            <select id="user-type" class="input narrow" aria-label="账号类型">
+              <option value="human">人员账号</option>
+              <option value="service">机器账号</option>
+            </select>
+            <select id="user-role" class="input narrow" aria-label="角色">
+              <option value="reader">reader</option>
+              <option value="developer">developer</option>
+            </select>
+            <button type="button" id="user-create" class="btn primary">
+              <svg class="icon"><use href="#i-plus"></use></svg>创建账号
+            </button>
+          </div>
+        </div>
+        <div class="form-section">
+          <h4 class="form-section-title">批量建号</h4>
+          <div class="row">
+            <label class="file-picker" id="batch-user-picker">
+              <input type="file" id="batch-user-file" accept=".xlsx" aria-label="选择 XLSX 文件" />
+              <svg class="icon" aria-hidden="true"><use href="#i-file"></use></svg>
+              <span class="file-picker-text">未选择文件</span>
+            </label>
+            <button type="button" id="batch-user-upload" class="btn primary">
+              <svg class="icon"><use href="#i-upload"></use></svg>上传 Excel 并创建
+            </button>
+            <button type="button" id="batch-user-template" class="btn">
+              <svg class="icon"><use href="#i-file"></use></svg>下载模板
+            </button>
+          </div>
+          <div id="batch-user-result" class="hidden"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 机器账号签发令牌：机器账号无法登录，令牌只能由管理员代发 -->
+  <div id="token-issue-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="token-issue-modal-title">
+    <div class="modal-card">
+      <div class="modal-head">
+        <div>
+          <p class="eyebrow">机器账号</p>
+          <h3 id="token-issue-modal-title">签发访问令牌</h3>
+        </div>
+        <button type="button" class="icon-btn" id="token-issue-close" aria-label="关闭">
+          <svg class="icon"><use href="#i-close"></use></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="row" id="token-issue-form">
+          <input id="token-issue-name" class="input" placeholder="令牌名称，如 ci-group-repo" aria-label="令牌名称" />
+          <button type="button" id="token-issue-confirm" class="btn primary">
+            <svg class="icon"><use href="#i-key"></use></svg>签发
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 凭据展示：初始密码与令牌明文只在此处出现一次 -->
+  <div id="credential-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="credential-title">
+    <div class="modal-card">
+      <div class="modal-head">
+        <div>
+          <p class="eyebrow">仅展示一次</p>
+          <h3 id="credential-title">凭据</h3>
+        </div>
+        <button type="button" class="icon-btn" id="credential-close" aria-label="关闭">
+          <svg class="icon"><use href="#i-close"></use></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div id="credential-body" class="token-result"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 补包弹窗 -->
+  <div id="modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div class="modal-card">
+      <div class="modal-head">
+        <div>
+          <p class="eyebrow">缺失依赖</p>
+          <h3 id="modal-title">补充缺失包</h3>
+        </div>
+        <button type="button" class="icon-btn" id="modal-close" aria-label="关闭">
+          <svg class="icon"><use href="#i-close"></use></svg>
+        </button>
+      </div>
+      <form id="supplement-form" class="form-stack">
+        <input type="hidden" id="supplement-id" />
+        <label>包文件<input type="file" id="supplement-file" class="file-input" required /></label>
+        <label>包名<input id="supplement-name" class="input" placeholder="留空则取文件名" /></label>
+        <label>版本<input id="supplement-version" class="input" placeholder="留空则取文件名 / 包内元数据" /></label>
+        <label>requires_python（PyPI 可选）<input id="supplement-python" class="input" placeholder="如 &gt;=3.9" /></label>
+        <button type="submit" class="btn primary block">
+          <svg class="icon"><use href="#i-upload"></use></svg>上传并校验入库
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- 安全校验详情弹窗 -->
+  <div id="scan-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="scan-modal-title">
+    <div class="modal-card wide">
+      <div class="modal-head">
+        <div>
+          <p class="eyebrow">六维扫描</p>
+          <h3 id="scan-modal-title">安全校验详情</h3>
+        </div>
+        <button type="button" class="icon-btn" id="scan-modal-close" aria-label="关闭">
+          <svg class="icon"><use href="#i-close"></use></svg>
+        </button>
+      </div>
+      <div id="scan-modal-body" class="modal-body"></div>
+    </div>
+  </div>
+
+  <!-- 包版本详情已改为列表内展开，不再使用独立弹窗 -->
+
+  <!-- 修改密码弹窗：首登强制改密时不可关闭 -->
+  <div id="pwd-modal" class="modal hidden" data-forced="0" role="dialog" aria-modal="true" aria-labelledby="pwd-title">
+    <div class="modal-card">
+      <div class="modal-head">
+        <div>
+          <p class="eyebrow">账号安全</p>
+          <h3 id="pwd-title">修改密码</h3>
+        </div>
+        <button type="button" class="icon-btn hidden" id="pwd-close" aria-label="关闭">
+          <svg class="icon"><use href="#i-close"></use></svg>
+        </button>
+      </div>
+      <form id="pwd-form" class="form-stack">
+        <label id="pwd-old-field">原密码<input type="password" id="pwd-old" class="input" autocomplete="current-password" required /></label>
+        <label>新密码<input type="password" id="pwd-new" class="input" autocomplete="new-password" required /></label>
+        <label>确认新密码<input type="password" id="pwd-confirm" class="input" autocomplete="new-password" required /></label>
+        <button type="submit" class="btn primary block">保存新密码</button>
+      </form>
+      <p class="hint" id="pwd-hint">新密码不少于 8 位，且不能包含用户名或常见弱口令片段；两次输入必须一致。</p>
+    </div>
+  </div>
+
+  <!-- 统一确认弹窗：替代原生 confirm，支持危险操作配色与键盘操作 -->
+  <div id="confirm-modal" class="modal hidden" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-message">
+    <div class="modal-card confirm-card">
+      <div class="confirm-head">
+        <span id="confirm-icon" class="confirm-icon"><svg class="icon"><use href="#i-alert"></use></svg></span>
+        <div>
+          <h3 id="confirm-title">确认操作</h3>
+          <p id="confirm-message" class="muted small confirm-message"></p>
+        </div>
+      </div>
+      <div class="confirm-actions">
+        <button type="button" id="confirm-cancel" class="btn">取消</button>
+        <button type="button" id="confirm-ok" class="btn primary">确认</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast-stack" role="status" aria-live="polite" aria-atomic="false"></div>
+  <script src="/pagination.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

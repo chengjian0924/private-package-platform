@@ -1,0 +1,94 @@
+# 源鉴 · 三角色拆分 + HTTP 直连部署
+# 默认形态：console/npm/pypi 三个容器各自映射宿主端口 3000/3001/3002，客户端直连。
+# Nginx 网关配置已预留但不启用；需要时执行 `docker compose --profile gateway up -d`（见 docs/CONTAINER_DEPLOYMENT.md）。
+#
+# 前置：把 deploy/.env.production.example 复制为 deploy/.env.production 并填好真实值。
+# 约束：三个容器共享同一主机本地卷（SQLite WAL 依赖本机文件锁），不支持跨主机/NFS。
+
+name: yuanjian
+
+x-app: &app-common
+  image: yuanjian:local
+  platform: linux/arm64
+  restart: unless-stopped
+  env_file:
+    - ./deploy/.env.production
+  volumes:
+    - data:/var/lib/yuanjian/data
+    - quarantine:/var/lib/yuanjian/quarantine
+  stop_grace_period: 40s
+  healthcheck:
+    test:
+      - CMD
+      - node
+      - -e
+      - "fetch('http://127.0.0.1:3000/api/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+    interval: 30s
+    timeout: 5s
+    retries: 3
+    start_period: 40s
+
+services:
+  console:
+    <<: *app-common
+    build: .
+    container_name: yuanjian-console
+    environment:
+      PROCESS_ROLE: console
+      PORT: "3000"
+      BIND_HOST: 0.0.0.0
+    ports:
+      - "3000:3000"
+
+  npm:
+    <<: *app-common
+    container_name: yuanjian-npm
+    environment:
+      PROCESS_ROLE: npm
+      PORT: "3000"
+      BIND_HOST: 0.0.0.0
+    ports:
+      - "3001:3000"
+    depends_on:
+      console:
+        condition: service_healthy
+
+  pypi:
+    <<: *app-common
+    container_name: yuanjian-pypi
+    environment:
+      PROCESS_ROLE: pypi
+      PORT: "3000"
+      BIND_HOST: 0.0.0.0
+    ports:
+      - "3002:3000"
+    depends_on:
+      console:
+        condition: service_healthy
+
+  # 预留网关：默认不启动。启用后由它统一终止 TLS 并按 /npm/ /pypi/ 分流。
+  # 启用前需准备证书到 deploy/certs/，并把 deploy/.env.production 的三个基址改为网关 https 地址、
+  # 移除 ALLOW_INSECURE_BASE_URL=true；同时按手册关闭宿主 3000/3001/3002 的对外暴露。
+  nginx:
+    image: nginx:1.27-alpine
+    platform: linux/arm64
+    profiles: ["gateway"]
+    container_name: yuanjian-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/nginx-container.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./deploy/certs:/etc/nginx/ssl:ro
+    depends_on:
+      console:
+        condition: service_healthy
+      npm:
+        condition: service_healthy
+      pypi:
+        condition: service_healthy
+
+volumes:
+  data:
+  quarantine:

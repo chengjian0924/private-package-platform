@@ -1,0 +1,65 @@
+# 源鉴 · 内网依赖安全治理平台 systemd unit 样例
+# 部署路径：/opt/yuanjian（代码与运行时）、/var/lib/yuanjian（数据），详见 docs/DEPLOYMENT.md
+# 安装：sudo cp deploy/yuanjian.service /etc/systemd/system/yuanjian.service && sudo systemctl daemon-reload
+
+[Unit]
+Description=Yuanjian - Private Registry & Supply Chain Guard (yuanjian)
+Documentation=file:/opt/yuanjian/docs/DEPLOYMENT.md
+# 网络就绪后再启动，避免启动期 SNTP 时钟采样直接失败
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=yuanjian
+Group=yuanjian
+WorkingDirectory=/opt/yuanjian
+# NODE_ENV 兜底：.env.production 未声明时生效；env 文件显式声明则以文件为准（systemd 后加载覆盖）
+Environment=NODE_ENV=production
+EnvironmentFile=/opt/yuanjian/.env.production
+# Node 路径按实际安装方式调整（NodeSource 默认 /usr/bin/node，nvm 安装为 ~/.nvm/...）
+ExecStart=/usr/bin/node dist/main.js
+
+# ---- 自愈（关闭 R-A4-01）----
+# kill -9 / OOM / 未捕获异常退出后 3 秒自动拉起
+Restart=always
+RestartSec=3
+# 120 秒内连续崩溃 10 次进入 failed 态，避免 crash loop 打满 CPU；需人工 systemctl reset-failed
+StartLimitIntervalSec=120
+StartLimitBurst=10
+
+# ---- 优雅停机（衔接 A-07）----
+# SIGTERM 触发应用内排空（宽限 25s + 硬超时看门狗 35s 内自行退出），
+# 40s 是 systemd 侧最后兜底：应用看门狗失效时才 SIGKILL
+KillSignal=SIGTERM
+TimeoutStopSec=40
+
+# ---- 资源与句柄 ----
+# 高于 1.2G RSS 告警线（YuanjianMemoryHigh），兜住 A-03 扫描 worker 512MB 堆 + 大包发布峰值；
+# 触达上限由 cgroup OOM 终止，Restart=always 拉起
+MemoryMax=1536M
+LimitNOFILE=65536
+
+# ---- 沙箱加固 ----
+# 全文件系统只读，仅放行数据目录；代码目录 /opt/yuanjian 运行期只读即可
+ProtectSystem=strict
+ReadWritePaths=/var/lib/yuanjian
+# 应用临时文件均在 DATA_DIR/tmp 下（B1），不依赖系统 /tmp
+PrivateTmp=true
+ProtectHome=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+# 监听 3000 非特权端口，无需任何 Linux capability
+CapabilityBoundingSet=
+
+# ---- 日志 ----
+# B2 结构化 JSON 日志走 stdout，由 journald 收集：journalctl -u yuanjian -f
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=yuanjian
+
+[Install]
+WantedBy=multi-user.target
