@@ -679,29 +679,63 @@ export class PackagesService {
     };
   }
 
-  searchNpm(text: string): Record<string, unknown>[] {
+  /**
+   * npm search 协议（/-/v1/search）。
+   *
+   * 消费方 dshmarket 内网版把 registry 当插件目录：先按 size/from 翻页枚举包名，
+   * 再逐个拉 packument，用 manifest 上的 dsh 字段判定是否为可安装插件；它自身
+   * 最多只取前 400 个候选。因此这里必须支持分页，且让带 dsh 的插件包排在前面，
+   * 否则插件被 500+ 个普通依赖挤到 400 名之后就会在插件市场里"显示不全"。
+   *
+   * total 是匹配总数（不是当页条数），与 npm 搜索协议一致，供客户端正确翻页。
+   */
+  searchNpm(text: string, size: number, from: number): { objects: Record<string, unknown>[]; total: number } {
+    const likeName = `%${text.toLowerCase()}%`;
+    const likeDisplay = `%${text}%`;
+    const where = `p.ecosystem = 'npm' AND p.status = 'active'
+       AND EXISTS (SELECT 1 FROM package_versions v WHERE v.package_id = p.id AND v.status = 'active')
+       AND (p.normalized_name LIKE ? OR p.display_name LIKE ?)`;
+
+    // 有 dsh 字段的插件优先（json_valid 短路保护，避免历史脏 metadata 让整条查询失败）
+    const isPlugin = `EXISTS (
+        SELECT 1 FROM package_versions pv
+        WHERE pv.package_id = p.id AND pv.status = 'active'
+          AND json_valid(pv.metadata) AND json_extract(pv.metadata, '$.dsh') IS NOT NULL
+      )`;
+
+    const total = this.db.get<{ c: number }>(
+      `SELECT COUNT(*) AS c FROM packages p WHERE ${where}`,
+      likeName,
+      likeDisplay,
+    )?.c ?? 0;
+
     const rows = this.db.all<{ display_name: string; normalized_name: string }>(
       `SELECT p.display_name, p.normalized_name FROM packages p
-       WHERE p.ecosystem = 'npm' AND p.status = 'active'
-       AND EXISTS (SELECT 1 FROM package_versions v WHERE v.package_id = p.id AND v.status = 'active')
-       AND (p.normalized_name LIKE ? OR p.display_name LIKE ?) ORDER BY p.created_at DESC LIMIT 25`,
-      `%${text.toLowerCase()}%`,
-      `%${text}%`,
+       WHERE ${where}
+       ORDER BY CASE WHEN ${isPlugin} THEN 0 ELSE 1 END, p.created_at DESC, p.id ASC
+       LIMIT ? OFFSET ?`,
+      likeName,
+      likeDisplay,
+      size,
+      from,
     );
-    return rows.map((row) => {
-      const versions = this.availableVersions('npm', row.display_name);
-      const latest = versions.length ? versions.sort(semver.rcompare)[0] : '0.0.0';
-      return {
-        package: {
-          name: row.display_name,
-          version: latest,
-          description: '',
-          date: nowIso(),
-        },
-        score: { final: 1, detail: { quality: 1, popularity: 1, maintenance: 1 } },
-        searchScore: 1,
-      };
-    });
+    return {
+      total,
+      objects: rows.map((row) => {
+        const versions = this.availableVersions('npm', row.display_name);
+        const latest = versions.length ? versions.sort(semver.rcompare)[0] : '0.0.0';
+        return {
+          package: {
+            name: row.display_name,
+            version: latest,
+            description: '',
+            date: nowIso(),
+          },
+          score: { final: 1, detail: { quality: 1, popularity: 1, maintenance: 1 } },
+          searchScore: 1,
+        };
+      }),
+    };
   }
 }
 

@@ -173,6 +173,7 @@ dsh web
 | 包被推到 npmjs.org | tgz 里 `publishConfig.registry` 覆盖了 `--registry` | 执行 5.1 |
 | `dsh plugin add` 报 404 | 依赖包没入库（源鉴无上游代理） | 补齐第 2 步全部依赖 |
 | 市场列表为空 | 包没声明 `dsh` 字段，或 `npmRegistry` 路径写错 | 检查包内 `package.json` 的 `dsh.bundle`；确认 registry 带 `/npm/` |
+| 市场只显示少数几个插件，导入的插件大部分看不到 | 旧版源鉴的 `/-/v1/search` 写死 `LIMIT 25` 且忽略 `size`/`from`，dshmarket 按分页枚举时只拿到 25 个包，插件被普通依赖挤掉 | 升级到已修复 search 分页的镜像：现支持 `size`/`from`（上限 500）、`total` 返回匹配总数，且带 `dsh` 的插件包优先排序，保证插件落在 dshmarket 取的前 400 个候选内。验证：`curl -s 'http://<HOST>:8861/npm/-/v1/search?text=&size=250' \| jq '.total'` 应等于 npm 包总数，而非 25 |
 | `dsh plugin add dshmarket` 提示「没有声明组合包」但 tgz 里确实有 `dsh.bundle` | 旧版源鉴入库时丢弃了 `dsh` 等字段，packument 无法透出 | 升级到已修复字段透传的镜像；存量包在维护窗口执行 `node scripts/backfill-npm-dsh.mjs --data-dir /var/lib/yuanjian/data`，会一并回填 `dsh`/peerDeps/os/cpu/bin 等白名单字段，无需重新导入 |
 | 安装到错误 profile | Desktop 版 profile 不是 `web` | Desktop 用应用内 Settings → Plugins 安装 |
 | 上传被安全扫描拦截 | client bundle 或 install 脚本命中规则 | 看扫描详情，整改或管理员临时关闭扫描 |

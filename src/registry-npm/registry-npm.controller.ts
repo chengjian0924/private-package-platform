@@ -38,6 +38,13 @@ async function decodeBase64ToFile(encoded: string, destPath: string): Promise<vo
   }
 }
 
+/** 查询参数整数化并钳制到 [min,max]；非法/缺省回退默认值 */
+function clampInt(raw: unknown, fallback: number, min: number, max: number): number {
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, Math.trunc(n)));
+}
+
 /**
  * npm registry 协议实现（catch-all 路由以兼容 @scope/name 与 tarball 路径）。
  * 支持：ping / whoami / search / login / publish / packument / tarball。
@@ -110,8 +117,12 @@ export class RegistryNpmController {
 
     if (sub.startsWith('/-/v1/search')) {
       const query = String(req.query.text || '');
-      const objects = this.packages.searchNpm(query);
-      res.json({ objects, total: objects.length, time: new Date().toISOString() });
+      // dshmarket 内网版按 size=250 + from 翻页枚举插件；允许到 500，
+      // 配合服务端"插件优先"排序，保证插件不会被普通依赖挤出候选集。
+      const size = clampInt(req.query.size, 250, 1, 500);
+      const from = clampInt(req.query.from, 0, 0, 100_000);
+      const { objects, total } = this.packages.searchNpm(query, size, from);
+      res.json({ objects, total, time: new Date().toISOString() });
       return;
     }
 

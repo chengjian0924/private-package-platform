@@ -161,6 +161,51 @@ describe('npm / PyPI registry 协议（e2e）', () => {
     expect(detail.body.data.versions[0].uploaderId).toBeUndefined();
   });
 
+  it('npm search 支持 size/from 分页，total 为匹配总数，插件包(dsh)优先（dshmarket 目录发现）', async () => {
+    // 造 1 个带 dsh 的插件包 + 3 个普通包，校验分页取全与插件优先排序
+    const publishPkg = async (name: string, extra: Record<string, unknown> = {}) => {
+      const tarball = await makeNpmTarball(name, '1.0.0', extra);
+      await request(ctx.baseUrl)
+        .put(`/npm/${name}`)
+        .auth(ADMIN.username, ctx.npmTokens[ADMIN.username])
+        .send({
+          name,
+          'dist-tags': { latest: '1.0.0' },
+          versions: { '1.0.0': { name, version: '1.0.0', ...extra, dist: {} } },
+          _attachments: { [`${name}-1.0.0.tgz`]: { data: tarball.toString('base64') } },
+        })
+        .expect(201);
+    };
+    await publishPkg('e2e-search-plugin', { dsh: { bundle: { patch: './cordis.patch.yml' } } });
+    await publishPkg('e2e-search-plain-a');
+    await publishPkg('e2e-search-plain-b');
+    await publishPkg('e2e-search-plain-c');
+
+    // 只取第 1 条：必须是带 dsh 的插件包，而不是最新创建的普通包
+    const first = await request(ctx.baseUrl).get('/npm/-/v1/search?text=e2e-search&size=1&from=0').expect(200);
+    expect(first.body.total).toBe(4);
+    expect(first.body.objects).toHaveLength(1);
+    expect(first.body.objects[0].package.name).toBe('e2e-search-plugin');
+
+    // 翻页取 remainder：与第 1 条合并后正好 4 个、无重复
+    const rest = await request(ctx.baseUrl).get('/npm/-/v1/search?text=e2e-search&size=10&from=1').expect(200);
+    expect(rest.body.total).toBe(4);
+    const names = [first.body.objects[0].package.name, ...rest.body.objects.map((o: { package: { name: string } }) => o.package.name)];
+    expect(names).toHaveLength(4);
+    expect(new Set(names).size).toBe(4);
+    expect(names).toContain('e2e-search-plain-c');
+
+    // 超出范围的 from 返回空 objects 但 total 不变
+    const beyond = await request(ctx.baseUrl).get('/npm/-/v1/search?text=e2e-search&size=10&from=100').expect(200);
+    expect(beyond.body.objects).toHaveLength(0);
+    expect(beyond.body.total).toBe(4);
+
+    // 非法 size/from 回退默认，不报错
+    const fallback = await request(ctx.baseUrl).get('/npm/-/v1/search?text=e2e-search&size=abc&from=-5').expect(200);
+    expect(fallback.body.total).toBe(4);
+    expect(fallback.body.objects.length).toBeGreaterThan(0);
+  });
+
   it('npm 重复版本与非法版本返回 registry 错误体', async () => {
     const tarball = await makeNpmTarball('e2e-npm-lib', '1.0.0');
     const duplicate = await request(ctx.baseUrl)
