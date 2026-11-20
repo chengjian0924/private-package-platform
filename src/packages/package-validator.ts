@@ -2,7 +2,7 @@ import { Readable } from 'node:stream';
 import * as semver from 'semver';
 import * as tar from 'tar';
 import { digestOf } from '../common/http.util';
-import { pickNpmMetadata } from './npm-metadata';
+import { isNpmManifestPath, pickNpmMetadata } from './npm-metadata';
 import type { Ecosystem } from './packages.service';
 import { isValidName, normalizeName } from './packages.service';
 
@@ -142,12 +142,15 @@ interface NpmManifest {
 
 export async function readNpmPackageManifest(buffer: Buffer): Promise<NpmManifest> {
   // 用对象持有引用，避免闭包内赋值被 TS 收窄为 never
-  const holder: { data: Buffer | null } = { data: null };
+  const holder: { data: Buffer | null; depth: number } = { data: null, depth: Number.MAX_SAFE_INTEGER };
 
   const parser = tar.t({
     onentry: (entry) => {
       const entryPath = entry.path.replace(/^\.\//, '');
-      if (entryPath === 'package/package.json' || entryPath === 'package.json') {
+      // 兼容非标准布局：<包名>/package.json（如离线 @types 包）
+      const depth = entryPath.split('/').filter(Boolean).length;
+      if (isNpmManifestPath(entryPath) && depth < holder.depth) {
+        holder.depth = depth;
         const chunks: Buffer[] = [];
         let size = 0;
         entry.on('data', (chunk: Buffer) => {

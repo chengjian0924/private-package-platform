@@ -1,3 +1,7 @@
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import * as tar from 'tar';
 import {
   compatiblePythonFromTags,
   pythonTagToVersion,
@@ -156,5 +160,45 @@ describe('PEP 425 版本标签解析', () => {
 
   it('从多标签推导兼容版本集合并去重排序', () => {
     expect(compatiblePythonFromTags(['cp311', 'cp312', 'py3'])).toEqual(['3.11', '3.12', '3.x']);
+  });
+});
+
+describe('npm tarball 包清单定位（兼容非标准顶层目录）', () => {
+  const npmValidate = (buffer: Buffer, name = 'demo-types') => validateNpmPackage({
+    buffer,
+    name,
+    version: '1.0.0',
+    existsInRegistry: false,
+    targets: {},
+  });
+
+  it('标准 package/package.json 正常识别', async () => {
+    const tarball = await makeNpmTarball('demo-types', '1.0.0');
+    const resolved = await npmValidate(tarball);
+    expect(resolved.status).toBe('valid');
+    expect(resolved.issues.some((i) => i.code === 'PKG_TARBALL_INVALID')).toBe(false);
+  });
+
+  it('非标准 <包名>/package.json 也能识别（离线 @types 包布局）', async () => {
+    const tarball = await makeNpmTarball('demo-types', '1.0.0', {}, {}, 'd3-array');
+    const out = await npmValidate(tarball);
+    expect(out.status).toBe('valid');
+    expect(out.issues.some((i) => i.code === 'PKG_TARBALL_INVALID')).toBe(false);
+    expect(out.metadata?.name).toBe('demo-types');
+  });
+
+  it('完全没有 package.json 仍判无效', async () => {
+    // 手工构造只有普通文件、无 package.json 的 tarball
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'yuanjian-nomanifest-'));
+    fs.mkdirSync(path.join(workDir, 'd3-array'), { recursive: true });
+    fs.writeFileSync(path.join(workDir, 'd3-array', 'index.js'), 'module.exports = 1;\n');
+    const chunks: Buffer[] = [];
+    const stream = tar.create({ gzip: true, cwd: workDir, portable: true }, ['d3-array']);
+    for await (const chunk of stream) chunks.push(chunk as Buffer);
+    fs.rmSync(workDir, { recursive: true, force: true });
+    const tarball = Buffer.concat(chunks);
+    const out = await npmValidate(tarball);
+    expect(out.status).toBe('invalid');
+    expect(out.issues.some((i) => i.code === 'PKG_TARBALL_INVALID')).toBe(true);
   });
 });

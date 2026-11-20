@@ -3,6 +3,7 @@ import { Readable } from 'node:stream';
 import AdmZip from 'adm-zip';
 import * as tar from 'tar';
 import type { SecurityConfig } from '../config/config';
+import { isNpmManifestPath } from '../packages/npm-metadata';
 import type { DependencyRef, Dimension, SecurityFinding, Severity, SignatureStatus } from './types';
 
 export interface ArchiveEntry {
@@ -446,7 +447,11 @@ export async function inspectArchive(
   const entries = parsed.entries;
   let manifest: Record<string, unknown> | null = null;
   if (ecosystem === 'npm') {
-    const pkgEntry = entries.find((e) => e.path === 'package/package.json') ?? entries.find((e) => e.path === 'package.json');
+    // package/package.json 为 npm 标准布局；也兼容 <包名>/package.json 的离线包。
+    // 按路径深度排序取最浅的，避免误取嵌套依赖清单。
+    const manifestEntries = entries.filter((e) => isNpmManifestPath(e.path));
+    manifestEntries.sort((a, b) => a.path.split('/').length - b.path.split('/').length);
+    const pkgEntry = manifestEntries.find((e) => e.text);
     if (pkgEntry?.text) {
       try {
         manifest = JSON.parse(pkgEntry.text) as Record<string, unknown>;
@@ -642,7 +647,7 @@ function integrityFindings(
         'INT-005',
         'high',
         '缺少包元数据',
-        archive.format === 'npm' ? '归档中未找到 package/package.json' : '归档中未找到 METADATA / PKG-INFO',
+        archive.format === 'npm' ? '归档中未找到包根 package.json' : '归档中未找到 METADATA / PKG-INFO',
         '补齐包元数据后重新打包',
       ),
     );

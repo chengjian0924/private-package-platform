@@ -32,9 +32,10 @@ export async function makeNpmTarball(
   version: string,
   extra: NpmManifestExtra = {},
   files: Record<string, string | Buffer> = {},
+  rootDir = 'package',
 ): Promise<Buffer> {
   const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'yuanjian-fixture-'));
-  const pkgDir = path.join(workDir, 'package');
+  const pkgDir = path.join(workDir, rootDir);
   fs.mkdirSync(pkgDir, { recursive: true });
   fs.writeFileSync(
     path.join(pkgDir, 'package.json'),
@@ -47,7 +48,7 @@ export async function makeNpmTarball(
     fs.writeFileSync(target, content);
   }
 
-  const stream = tar.create({ gzip: true, cwd: workDir, portable: true }, ['package']);
+  const stream = tar.create({ gzip: true, cwd: workDir, portable: true }, [rootDir]);
   const chunks: Buffer[] = [];
   await new Promise<void>((resolve, reject) => {
     stream.on('data', (chunk: Buffer) => chunks.push(Buffer.from(chunk)));

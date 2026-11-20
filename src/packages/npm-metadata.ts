@@ -42,3 +42,21 @@ export function pickNpmMetadata(
   }
   return picked;
 }
+
+/**
+ * 判断 tarball 内某个 entry 是否包根的 package.json。
+ *
+ * npm pack 的标准布局是 package/package.json，但部分离线包（如 @types/*）用
+ * 真实包名作顶层目录（d3-array/package.json）。两者都视为包清单。
+ * 只接受「零层或单层」目录，拒绝更深路径与 node_modules 内的清单，
+ * 避免误取嵌套依赖的 package.json。
+ */
+export function isNpmManifestPath(entryPath: string): boolean {
+  const normalized = entryPath.replace(/\\/g, '/').replace(/^\.\//, '').replace(/^\//, '');
+  const segments = normalized.split('/').filter(Boolean);
+  if (segments.length === 1) return segments[0] === 'package.json';
+  if (segments.length === 2) {
+    return segments[1] === 'package.json' && segments[0] !== 'node_modules';
+  }
+  return false;
+}
