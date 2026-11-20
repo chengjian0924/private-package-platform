@@ -293,6 +293,9 @@ export async function validateNpmPackage(input: NpmValidateInput): Promise<Valid
       description: manifest.description || '',
       engines: manifest.engines || null,
       dependencies: manifest.dependencies || null,
+      // DeepSeek Harness 通过 packument 的 dsh 字段判断插件组合包声明，
+      // 入库时必须保留，否则包内虽有 dsh.bundle 也无法被识别为插件。
+      dsh: manifest.dsh ?? null,
     },
     compatibility: {
       engines: manifest.engines || null,

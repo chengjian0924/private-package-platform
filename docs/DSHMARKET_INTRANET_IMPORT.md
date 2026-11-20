@@ -173,6 +173,7 @@ dsh web
 | 包被推到 npmjs.org | tgz 里 `publishConfig.registry` 覆盖了 `--registry` | 执行 5.1 |
 | `dsh plugin add` 报 404 | 依赖包没入库（源鉴无上游代理） | 补齐第 2 步全部依赖 |
 | 市场列表为空 | 包没声明 `dsh` 字段，或 `npmRegistry` 路径写错 | 检查包内 `package.json` 的 `dsh.bundle`；确认 registry 带 `/npm/` |
+| `dsh plugin add dshmarket` 提示「没有声明组合包」但 tgz 里确实有 `dsh.bundle` | 旧版源鉴入库时丢弃了 `dsh` 字段，packument 无法透出 | 升级到已修复该字段透传的镜像；存量包在维护窗口执行 `node scripts/backfill-npm-dsh.mjs --data-dir /var/lib/yuanjian/data`，无需重新导入 |
 | 安装到错误 profile | Desktop 版 profile 不是 `web` | Desktop 用应用内 Settings → Plugins 安装 |
 | 上传被安全扫描拦截 | client bundle 或 install 脚本命中规则 | 看扫描详情，整改或管理员临时关闭扫描 |
 | 内网版不是 `latest` | prerelease 版本号排序低于正式版 | 源鉴只保留内网版，或显式指定版本安装 |

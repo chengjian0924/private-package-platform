@@ -249,6 +249,7 @@ export class RegistryNpmController {
           engines?: Record<string, string>;
           dependencies?: Record<string, string>;
           dist?: { integrity?: string; shasum?: string };
+          dsh?: Record<string, unknown>;
         };
         if (!semver.valid(version)) throw new ApiError('PKG_VERSION_INVALID', { version });
 
@@ -341,6 +342,8 @@ export class RegistryNpmController {
               description: meta.description || body.description || '',
               engines: meta.engines || null,
               dependencies: meta.dependencies || null,
+              // harness 以 packument 的 dsh 声明识别组合包；发布体里带就来，没有则为 null
+              dsh: meta.dsh ?? null,
               dist: { shasum: stored.shasum, integrity: stored.integrity },
             },
             compatibility: { engines: meta.engines || null, targets: null },

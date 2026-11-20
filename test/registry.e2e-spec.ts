@@ -55,9 +55,11 @@ describe('npm / PyPI registry 协议（e2e）', () => {
   });
 
   it('npm publish → packument → tarball 下载全链路', async () => {
+    const dsh = { bundle: { patch: './cordis.patch.yml' } };
     const tarball = await makeNpmTarball('e2e-npm-lib', '1.0.0', {
       description: '端到端测试包',
       engines: { node: '>=18' },
+      dsh,
     });
 
     const publish = await request(ctx.baseUrl)
@@ -68,7 +70,7 @@ describe('npm / PyPI registry 协议（e2e）', () => {
         name: 'e2e-npm-lib',
         description: '端到端测试包',
         'dist-tags': { latest: '1.0.0' },
-        versions: { '1.0.0': { name: 'e2e-npm-lib', version: '1.0.0', dist: {} } },
+        versions: { '1.0.0': { name: 'e2e-npm-lib', version: '1.0.0', dsh, dist: {} } },
         _attachments: {
           'e2e-npm-lib-1.0.0.tgz': { data: tarball.toString('base64'), length: tarball.length },
         },
@@ -90,6 +92,9 @@ describe('npm / PyPI registry 协议（e2e）', () => {
     const packument = await request(ctx.baseUrl).get('/npm/e2e-npm-lib').expect(200);
     expect(packument.body.name).toBe('e2e-npm-lib');
     expect(packument.body['dist-tags'].latest).toBe('1.0.0');
+    // dsh 组合包声明必须从 package.json 透传到 packument，harness 据此识别插件
+    expect(packument.body.dsh).toEqual(dsh);
+    expect(packument.body.versions['1.0.0'].dsh).toEqual(dsh);
     expect(packument.body.versions['1.0.0'].dist.tarball).toContain('/npm/e2e-npm-lib/-/e2e-npm-lib-1.0.0.tgz');
 
     const download = await request(ctx.baseUrl).get('/npm/e2e-npm-lib/-/e2e-npm-lib-1.0.0.tgz').expect(200);

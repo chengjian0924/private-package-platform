@@ -646,6 +646,8 @@ export class PackagesService {
         description: meta.description || '',
         engines: meta.engines || undefined,
         dependencies: meta.dependencies || undefined,
+        // DeepSeek Harness 用 packument 里的 dsh 声明识别组合包，必须与原包 package.json 一致
+        dsh: meta.dsh ?? undefined,
         deprecated: undefined,
         // 消费方可直接判断该版本是否通过安全校验，无需登录管理端
         security: this.securityBadge(row.id),
@@ -670,6 +672,7 @@ export class PackagesService {
       _rev: `1-${pkg.id}`,
       name: pkg.display_name,
       description: (latestMeta.description as string) || '',
+      dsh: latestMeta.dsh ?? undefined,
       'dist-tags': { latest: latest ?? '0.0.0', ...activeTags },
       versions,
       time,

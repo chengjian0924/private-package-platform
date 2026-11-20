@@ -12,6 +12,7 @@ export interface NpmManifestExtra {
   os?: string[];
   cpu?: string[];
   scripts?: Record<string, string>;
+  dsh?: Record<string, unknown>;
 }
 
 /** 构造真实 npm tarball（package/package.json + 指定文件），用于上传/校验用例 */
