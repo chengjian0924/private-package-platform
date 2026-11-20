@@ -9,10 +9,21 @@ export interface NpmManifestExtra {
   description?: string;
   engines?: Record<string, string>;
   dependencies?: Record<string, string>;
+  peerDependencies?: Record<string, string>;
+  peerDependenciesMeta?: Record<string, { optional?: boolean }>;
+  optionalDependencies?: Record<string, string>;
   os?: string[];
   cpu?: string[];
+  bin?: string | Record<string, string>;
+  main?: string;
+  module?: string;
+  exports?: unknown;
   scripts?: Record<string, string>;
   dsh?: Record<string, unknown>;
+  license?: string;
+  repository?: string | Record<string, string>;
+  homepage?: string;
+  keywords?: string[];
 }
 
 /** 构造真实 npm tarball（package/package.json + 指定文件），用于上传/校验用例 */

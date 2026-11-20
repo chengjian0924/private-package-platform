@@ -173,7 +173,8 @@ describe('A1 批量导入与全量校验（e2e）', () => {
 
   it('识别失败的单个文件进失败明细，不影响同批其它包入库', async () => {
     // 文件名故意与包内声明不一致：身份必须来自 package.json，而不是文件名
-    const tgz = await makeNpmTarball('e2e-auto-lib', '1.2.3', { description: '免清单导入测试包' });
+    const dsh = { bundle: { patch: './cordis.patch.yml' } };
+    const tgz = await makeNpmTarball('e2e-auto-lib', '1.2.3', { description: '免清单导入测试包', dsh });
 
     const created = await request(ctx.baseUrl)
       .post('/api/v1/import-batches/auto')
@@ -207,6 +208,11 @@ describe('A1 批量导入与全量校验（e2e）', () => {
       .send({ mode: 'partial' })
       .expect(201);
     expect(committed.body.data.stats.committed).toBe(1);
+
+    // 批量导入从 tarball 读取 package.json，dsh 声明同样要透传到 packument
+    const packument = await request(ctx.baseUrl).get('/npm/e2e-auto-lib').expect(200);
+    expect(packument.body.dsh).toEqual(dsh);
+    expect(packument.body.versions['1.2.3'].dsh).toEqual(dsh);
   });
 
   it('zip 压缩包自动解压：子目录有效、无关文件与嵌套 zip 进失败明细', async () => {

@@ -9,6 +9,7 @@ import { AuditService } from '../audit/audit.service';
 import { AuthService } from '../auth/auth.service';
 import { getConfig } from '../config/config';
 import { MissingService, versionFromMissedFilename } from '../missing/missing.service';
+import { pickNpmMetadata } from '../packages/npm-metadata';
 import { PackagesService, type InsertVersionInput } from '../packages/packages.service';
 import { SecurityService, type GateResult } from '../security/security.service';
 import { StorageService } from '../storage/storage.service';
@@ -249,7 +250,7 @@ export class RegistryNpmController {
           engines?: Record<string, string>;
           dependencies?: Record<string, string>;
           dist?: { integrity?: string; shasum?: string };
-          dsh?: Record<string, unknown>;
+          [key: string]: unknown;
         };
         if (!semver.valid(version)) throw new ApiError('PKG_VERSION_INVALID', { version });
 
@@ -339,11 +340,11 @@ export class RegistryNpmController {
             sizeBytes: stored.size,
             storageKey: stored.key,
             metadata: {
+              // 与批量导入共用同一份白名单，避免两条入库路径字段集漂移
+              ...pickNpmMetadata(meta),
               description: meta.description || body.description || '',
               engines: meta.engines || null,
               dependencies: meta.dependencies || null,
-              // harness 以 packument 的 dsh 声明识别组合包；发布体里带就来，没有则为 null
-              dsh: meta.dsh ?? null,
               dist: { shasum: stored.shasum, integrity: stored.integrity },
             },
             compatibility: { engines: meta.engines || null, targets: null },

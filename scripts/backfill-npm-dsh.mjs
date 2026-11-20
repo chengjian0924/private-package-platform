@@ -1,23 +1,26 @@
 #!/usr/bin/env node
 /**
- * 回填已入库 npm 包的 dsh 组合包声明。
+ * 回填已入库 npm 包的安装元数据（含 dsh 组合包声明）。
  *
  * 背景：源鉴早期入库只保存 description/engines/dependencies/dist，
- * 丢掉了原包 package.json 里的 dsh 字段，导致 DeepSeek Harness 通过
- * packument 判断时认为「没有声明组合包」。本脚本从对象存储中的 tarball
- * 重新读取 dsh 字段并写回 package_versions.metadata，无需重新导入包。
+ * 丢掉了 package.json 里的 dsh、peerDependencies、os、cpu、bin 等字段，
+ * 导致 DeepSeek Harness 认为包「没有声明组合包」，也会影响 npm 的依赖解析。
+ * 本脚本从对象存储中的 tarball 重新读取白名单字段并合并回
+ * package_versions.metadata，无需重新导入包。
  *
  * 用法（在服务停止或维护窗口执行）：
  *   node scripts/backfill-npm-dsh.mjs --data-dir /var/lib/yuanjian/data
  *   node scripts/backfill-npm-dsh.mjs --data-dir ./data/dev --dry-run
  *   node scripts/backfill-npm-dsh.mjs --data-dir ./data/dev --force
  *
- * --dry-run 只统计不写库；--force 连已有 dsh 字段的版本也用 tarball 覆盖。
+ * --dry-run 只统计不写库；--force 用 tarball 的值覆盖已有白名单字段。
+ * 脚本名沿用 dsh 时期的名字，实际回填 src/packages/npm-metadata.ts 的整套白名单。
  */
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { pickNpmMetadata } from '../dist/packages/npm-metadata.js';
 import { readNpmPackageManifest } from '../dist/packages/package-validator.js';
 
 const argv = process.argv.slice(2);
@@ -51,8 +54,8 @@ async function main() {
     .all();
 
   let updated = 0;
-  let already = 0;
-  let noDeclaration = 0;
+  let unchanged = 0;
+  let withDsh = 0;
   let missingFile = 0;
   let failed = 0;
 
@@ -62,10 +65,6 @@ async function main() {
       meta = row.metadata ? JSON.parse(row.metadata) : {};
     } catch {
       meta = {};
-    }
-    if (!force && meta.dsh !== undefined) {
-      already += 1;
-      continue;
     }
 
     const file = path.resolve(dataDir, row.storage_key);
@@ -85,14 +84,19 @@ async function main() {
       console.error(`读取失败 ${row.display_name}: ${err.message}`);
       continue;
     }
-    if (!manifest.dsh) {
-      noDeclaration += 1;
+
+    const picked = pickNpmMetadata(manifest);
+    if (picked.dsh) withDsh += 1;
+    const missing = Object.keys(picked).filter((key) => meta[key] === undefined);
+    if (!force && missing.length === 0) {
+      unchanged += 1;
       continue;
     }
 
     try {
       if (!dryRun) {
-        const next = { ...meta, dsh: manifest.dsh };
+        // 保留已有 metadata 与 dist 等计算字段，只补齐/覆盖白名单字段
+        const next = { ...meta, ...picked };
         db.prepare('UPDATE package_versions SET metadata = ? WHERE id = ?').run(JSON.stringify(next), row.id);
       }
       updated += 1;
@@ -105,7 +109,7 @@ async function main() {
   db.close();
   console.log(
     JSON.stringify(
-      { total: rows.length, updated, already, noDeclaration, missingFile, failed, dryRun, dataDir },
+      { total: rows.length, updated, unchanged, withDsh, missingFile, failed, dryRun, dataDir },
       null,
       2,
     ),

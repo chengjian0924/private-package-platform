@@ -2,6 +2,7 @@ import { Readable } from 'node:stream';
 import * as semver from 'semver';
 import * as tar from 'tar';
 import { digestOf } from '../common/http.util';
+import { pickNpmMetadata } from './npm-metadata';
 import type { Ecosystem } from './packages.service';
 import { isValidName, normalizeName } from './packages.service';
 
@@ -288,14 +289,12 @@ export async function validateNpmPackage(input: NpmValidateInput): Promise<Valid
     status: issues.some((i) => i.severity === 'error') ? 'invalid' : 'valid',
     issues,
     metadata: {
+      ...pickNpmMetadata(manifest as Record<string, unknown>),
       name: manifest.name,
       version: manifest.version,
       description: manifest.description || '',
       engines: manifest.engines || null,
       dependencies: manifest.dependencies || null,
-      // DeepSeek Harness 通过 packument 的 dsh 字段判断插件组合包声明，
-      // 入库时必须保留，否则包内虽有 dsh.bundle 也无法被识别为插件。
-      dsh: manifest.dsh ?? null,
     },
     compatibility: {
       engines: manifest.engines || null,

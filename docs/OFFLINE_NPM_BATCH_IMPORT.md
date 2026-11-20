@@ -104,6 +104,8 @@ node scripts/import-npm-batch.mjs \
 
 导入完成后，下游 dsh profile 的 `.npmrc` 指向源鉴，并在 `cordis.patch.yml` 配 `offline: true` + `npmRegistry: http://<host>:3000/npm/`。市场会把源鉴里所有带 `dsh` 字段的包自动上架。注意 tarball 下载地址里的 host 由源鉴 `NPM_BASE_URL` / `PUBLIC_BASE_URL` 决定：**必须设成下游能访问的地址**，否则 packument 里会写回 `localhost:3000`，下游拉包失败（与导入脚本无关）。
 
+packument 只透传安装解析需要的白名单字段：`description`、`engines`、`dependencies`、`peerDependencies`、`peerDependenciesMeta`、`optionalDependencies`、`os`、`cpu`、`bin`、`main`、`module`、`exports`、`dsh`、`license`、`repository`、`homepage`、`keywords`。`scripts`、`publishConfig` 等执行/发布相关字段刻意不透传；`dist`、`security`、`dist-tags` 由服务端计算。
+
 ---
 
 ## 4. 已验证范围

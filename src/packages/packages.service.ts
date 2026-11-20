@@ -5,6 +5,7 @@ import { ApiError } from '../common/errors';
 import { nowIso } from '../common/http.util';
 import { DatabaseService, isUniqueViolation } from '../db/database.service';
 import { isValidName, normalizeName, type Ecosystem } from './names';
+import { pickNpmMetadata } from './npm-metadata';
 import { SecurityService, type GateResult } from '../security/security.service';
 import { StorageService } from '../storage/storage.service';
 import { getConfig } from '../config/config';
@@ -640,14 +641,12 @@ export class PackagesService {
       const meta = row.metadata ? (safeJson(row.metadata) as Record<string, unknown>) : {};
       const dist = (meta.dist as Record<string, string>) || {};
       versions[row.version] = {
+        // 白名单字段与原包 package.json 保持一致；dsh 供 harness 识别组合包
+        ...pickNpmMetadata(meta),
         _id: `${pkg.display_name}@${row.version}`,
         name: pkg.display_name,
         version: row.version,
         description: meta.description || '',
-        engines: meta.engines || undefined,
-        dependencies: meta.dependencies || undefined,
-        // DeepSeek Harness 用 packument 里的 dsh 声明识别组合包，必须与原包 package.json 一致
-        dsh: meta.dsh ?? undefined,
         deprecated: undefined,
         // 消费方可直接判断该版本是否通过安全校验，无需登录管理端
         security: this.securityBadge(row.id),
@@ -668,11 +667,11 @@ export class PackagesService {
     const storedTags = pkg.dist_tags ? ((safeJson(pkg.dist_tags) as Record<string, string>) ?? {}) : {};
     const activeTags = Object.fromEntries(Object.entries(storedTags).filter(([, v]) => v in versions));
     return {
+      ...pickNpmMetadata(latestMeta),
       _id: pkg.display_name,
       _rev: `1-${pkg.id}`,
       name: pkg.display_name,
       description: (latestMeta.description as string) || '',
-      dsh: latestMeta.dsh ?? undefined,
       'dist-tags': { latest: latest ?? '0.0.0', ...activeTags },
       versions,
       time,
