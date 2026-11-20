@@ -715,7 +715,7 @@ twine upload --repository-url http://&lt;host&gt;:3000/pypi/ dist/*</code></pre>
 
         <div class="card manual-sec" id="manual-config" data-manual-title="关键配置项" data-manual-perm="config:manage">
           <div class="card-head"><h3>关键配置项</h3></div>
-          <p class="manual-note">环境变量是启动基线；「字典管理」（仅管理员）每组只列配置项、当前值与基线，各项含义见下表。保存后即时生效，无需重启，并写入审计。</p>
+          <p class="manual-note">环境变量是启动基线；「字典管理」（仅管理员）每组只列配置项、当前值与基线，各项含义见下表。保存后即时生效，并自动同步到 console / npm / pypi 全部服务进程，无需重启，同时写入审计。</p>
           <div class="table-wrap"><table class="table"><thead><tr><th>配置项</th><th>默认</th><th>作用 / 建议值</th></tr></thead><tbody>
             <tr><td class="mono">PORT / DATA_DIR</td><td>3000 / ./data/dev</td><td>监听端口与数据根目录；生产按部署规划设置</td></tr>
             <tr><td class="mono">PUBLIC_BASE_URL</td><td>http://localhost:3000</td><td>生成下载/索引地址的基址；生产需与实际访问地址一致</td></tr>

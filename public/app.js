@@ -2842,7 +2842,7 @@
         // 管理员保存后本会话立即联动：关闭扫描后普通模块的入口与导入形态同步收敛
         var scan = dictionaryValue(groups, 'security.scanEnabled');
         if (typeof scan === 'boolean') applyFeatureState({ securityScanEnabled: scan });
-        showToast('字典配置已保存，限流、漏洞扫描与保留清理策略已即时生效', 'ok');
+        showToast('字典配置已保存，限流、漏洞扫描与保留清理策略已在全部服务进程生效', 'ok');
       })
       .catch(reportError)
       .finally(function () {

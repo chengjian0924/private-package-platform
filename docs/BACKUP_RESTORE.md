@@ -96,7 +96,7 @@ PUT /api/v1/dictionary
 
 - `BackupScheduler.tick()` 每轮心跳重新读取 `getConfig().backup`，发现 `enabled=false` 直接返回，不再执行。
 - `BackupService.runSweep()` 在开关关闭时立即返回 `enabled:false`，**连备份目录都不创建**，避免"关了却多出空目录"的误读。
-- 字典保存后由 `DictionaryService.save()` 调用 `setDictionaryOverrides()` 即时套用，**无需重启、无需重建容器**；最多一个心跳周期（60s）内生效。
+- 字典保存后由 `DictionaryService.update()` 调用 `setDictionaryOverrides()` 在本进程即时套用；其他角色进程由覆盖层自动回读共享库同步（默认 ≤1 秒，见 `DICTIONARY_SYNC_INTERVAL_MS`），**无需重启、无需重建容器**；备份开关关闭后还要等下一轮心跳（最多 60s）才停止执行。
 - 关闭只停止后续备份，**从不删除**已生成的备份文件。
 
 **机制 B（整机归档脚本）——下一次调度起生效**：

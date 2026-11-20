@@ -3,7 +3,7 @@ import { ApiError } from '../common/errors';
 import { nowIso } from '../common/http.util';
 import { DatabaseService } from '../db/database.service';
 import { getConfig, getEnvConfig } from '../config/config';
-import { setDictionaryOverrides, type DictionaryOverrides } from '../config/overrides';
+import { registerDictionaryLoader, setDictionaryOverrides, type DictionaryOverrides } from '../config/overrides';
 
 /** 字典条目类型：boolean 渲染为开关，int 渲染为数字输入框（带 min/max 校验） */
 type DictType = 'boolean' | 'int';
@@ -79,7 +79,7 @@ export const DICTIONARY_DEFS: DictionaryDef[] = [
     group: 'security',
     label: '漏洞扫描与校验',
     type: 'boolean',
-    hint: '总开关：关闭后上传 / 导入 / 复检全部跳过六维扫描直接入库',
+    hint: '总开关：关闭后上传 / 导入 / 复检全部跳过六维扫描直接入库；三角色共享同一数据库，保存后自动同步到全部服务进程，无需重启',
   },
   {
     key: 'security.requireSignature',
@@ -219,16 +219,19 @@ export class DictionaryService implements OnModuleInit {
   constructor(private readonly db: DatabaseService) {}
 
   /**
-   * 启动时把 DB 中的字典覆盖项装载进进程内覆盖层。
-   * 放在 CoreModule（全局共享）：拆分部署时 npm / pypi 进程同样要套用覆盖，
-   * 否则只有控制台进程限流、registry 进程不限流，配置形同虚设。
+   * 注入 DB 读取器并装载初始值。三个角色进程都会走这里（CoreModule 是 @Global 共享模块）：
+   * 启动装载只保证「本进程有值」，之后其他进程的字典变更由覆盖层惰性回读共享库自动同步。
+   * 拆分部署时 npm / pypi 进程同样注册，避免只有控制台进程生效。
    */
   onModuleInit(): void {
+    registerDictionaryLoader(() => this.readFromDb(), {
+      onError: (err) => this.logger.warn(`字典覆盖同步失败，沿用上次值: ${(err as Error).message}`),
+    });
     this.applyFromDb();
   }
 
-  /** 读取 DB 字典并应用到 getConfig()，保存与启动共用同一入口 */
-  private applyFromDb(): DictionaryOverrides {
+  /** 纯读：从共享 DB 读取并校验字典项，不修改进程内覆盖层（供覆盖层跨进程回读） */
+  private readFromDb(): DictionaryOverrides {
     const overrides: DictionaryOverrides = {};
     const byKey = new Map(DICTIONARY_DEFS.map((def) => [def.key as string, def]));
     for (const row of this.db.all<DictRow>('SELECT * FROM sys_dictionary')) {
@@ -241,6 +244,12 @@ export class DictionaryService implements OnModuleInit {
       }
       (overrides as Record<string, unknown>)[row.key] = value;
     }
+    return overrides;
+  }
+
+  /** 把 DB 值套用到本进程：启动装载与保存后即时生效共用同一入口 */
+  private applyFromDb(): DictionaryOverrides {
+    const overrides = this.readFromDb();
     setDictionaryOverrides(overrides);
     return overrides;
   }
@@ -346,7 +355,9 @@ export class DictionaryService implements OnModuleInit {
     });
 
     this.applyFromDb();
-    this.logger.log(`字典已更新（${Object.keys(input).length} 项），配置即时生效`);
+    this.logger.log(
+      `字典已更新（${Object.keys(input).length} 项）：本进程即时生效，其他角色进程将在同步间隔内自动读取共享库`,
+    );
     return this.describe();
   }
 }
