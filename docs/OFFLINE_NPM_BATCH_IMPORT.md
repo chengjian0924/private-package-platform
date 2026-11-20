@@ -99,6 +99,7 @@ node scripts/import-npm-batch.mjs \
 | `SYS_VALIDATION` + `UPLOAD_FILE_TOO_LARGE` | 包超过字典业务上限 | 调大字典「npm 上传包大小上限」或提高 HTTP 硬天花板 `MAX_NPM_PUBLISH_BYTES` 后重启 |
 | `SEC_*` / `QUARANTINE` / `BLOCK` | 安全扫描拦截原生二进制或可疑命令 | 看失败清单里的 scanId，到控制台「安全校验」复核；或临时关闭扫描后重跑 |
 | `PKG_VERSION_DUPLICATE` | 版本已存在 | 脚本已按成功处理，无需干预 |
+| `PKG_TARBALL_INVALID` + `tarball 中未找到 package.json` | 少数离线包（如 `@types/*`）用真实包名作顶层目录（`d3-array/package.json`），而非 npm 标准 `package/package.json` | 源鉴已兼容两种布局（含安全扫描的 manifest 定位）。若仍失败，确认镜像版本 ≥ `2937dd7`；这批包全部自带 package.json，不是缺清单 |
 | `local-hash-mismatch` | 本地 tgz 与 registry.json 声明的 sha256 不一致 | 离线包损坏，重新下载；不要强行重打包 |
 | 请求超时 | 大包 + 慢网 | `--timeout 300000`，并把 `--concurrency` 降到 1 |
 
