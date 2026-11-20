@@ -105,11 +105,11 @@ npm run start:test# 测试环境：http://localhost:3100，数据目录 data/tes
 | `SESSION_TTL_SEC` | `28800` | `7200` | 会话绝对有效期（秒） |
 | `SESSION_IDLE_TTL_SEC` | `1800` | `900` | 会话空闲超时（秒） |
 | `AUTH_CACHE_TTL_MS` | `5000` | `5000` | 鉴权决策缓存 TTL（毫秒） |
-| `PASSWORD_MIN_LENGTH` | `12` | `12` | 口令最小长度；建号初始口令为 16 位随机串 |
+| `PASSWORD_MIN_LENGTH` | `8` | `8` | 口令最小长度（8–64）；生产环境在 `deploy/.env.production` 中同样设为 `8`；建号初始口令为 16 位随机串 |
 | `LOGIN_MAX_FAILURES` | `5` | `5` | 连续失败达到该次数锁定账号 |
 | `LOGIN_LOCK_MINUTES` | `15` | `15` | 锁定时长（分钟），到期自动解锁 |
 | `BOOTSTRAP_ADMIN_USERNAME` | `admin` | `admin` | 首启建号的管理员名；用户表非空时不生效 |
-| `BOOTSTRAP_ADMIN_PASSWORD` | 示例值 | 示例值 | 仅首启建号用；生产会校验强度（≥12 位、不含用户名、非弱口令），建号后必须移除 |
+| `BOOTSTRAP_ADMIN_PASSWORD` | 示例值 | 示例值 | 仅首启建号用；生产会校验强度（≥ `PASSWORD_MIN_LENGTH` 位、不含用户名、非弱口令），建号后必须移除 |
 
 容量与入库：
 
@@ -123,8 +123,10 @@ npm run start:test# 测试环境：http://localhost:3100，数据目录 data/tes
 | `MAX_NPM_UPLOAD_BYTES` | `209715200` | 同左 | npm 上传包业务上限（≈200MB）；**可在控制台「字典管理 → 上传包大小上限」运行时调整**，不得超过 HTTP 硬天花板 |
 | `MAX_PYPI_UPLOAD_BYTES` | `209715200` | 同左 | PyPI 上传包业务上限（≈200MB）；同上可运行时调整 |
 | `BATCH_DEFAULT_MODE` | `partial` | `partial` | 入库默认模式 |
-| `DEFAULT_NODE_TARGET` | `20.11.0` | 同左 | CSV/requirements 未声明 targets 时的默认值；npm 据此校验 `engines.node` |
+| `DEFAULT_NODE_TARGET` | `20.11.0` | 同左 | CSV/requirements 未声明 targets 时的默认值；**仅用于兼容性提示**，`engines.node` / `os` / `cpu` 不匹配只告警、不拦截 |
 | `DEFAULT_PYTHON_TARGET` | `3.11.9` | 同左 | 同上；**仅用于兼容性提示**，PyPI 为通用仓库，任意 Python 版本的 wheel 均可入库，该值不拦截包 |
+
+两个目标版本都只影响提示文案，不改变入库判定。平台按通用源设计：npm / PyPI 均完整保留运行时元数据并透传给客户端，由 `npm` / `pip` 在拉取端按自身环境挑选包。
 
 安全扫描：
 
@@ -213,9 +215,11 @@ curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3000/pypi/simple/   # 
 curl -s http://127.0.0.1:3000/api/v1/auth/me
 ```
 
-浏览器打开 `http://localhost:3000/`，用 `BOOTSTRAP_ADMIN_USERNAME` / `BOOTSTRAP_ADMIN_PASSWORD` 指定的初始管理员登录，系统会强制要求改密；改密后可看到「包管理 / 批量导入 / 缺失依赖 / 安全校验 / 审计日志 / 访问令牌 / 用户管理 / 字典管理」八个视图。其余账号由管理员在「用户管理」中创建，初始密码只展示一次。侧栏按权限动态收敛：**审计日志、用户管理、字典管理仅管理员可见**；漏洞扫描关闭后，非管理员的安全校验入口自动隐藏，批量导入页也只保留上传卡并走「上传即基础校验 + 入库」快速通道。控制台通过 `GET /api/v1/features` 读取能力位并每分钟同步一次，无需刷新页面。
+浏览器打开 `http://localhost:3000/`，用 `BOOTSTRAP_ADMIN_USERNAME` / `BOOTSTRAP_ADMIN_PASSWORD` 指定的初始管理员登录，系统会强制要求改密；改密后可看到「包管理 / 批量导入 / 缺失依赖 / 安全校验 / 审计日志 / 访问令牌 / 用户管理 / 字典管理 / 用户手册」九个视图。其余账号由管理员在「用户管理」中创建，初始密码只展示一次。侧栏按权限动态收敛：**审计日志、用户管理、字典管理仅管理员可见**；漏洞扫描关闭后，非管理员的安全校验入口自动隐藏，批量导入页也只保留上传卡并走「上传即基础校验 + 入库」快速通道。控制台通过 `GET /api/v1/features` 读取能力位并每分钟同步一次，无需刷新页面。
 
 「字典管理」仅管理员可见（`config:manage` 权限），用于统一维护系统运行时配置：限流参数（开关 / 窗口 / 认证 / 读写上限）、漏洞扫描校验开关（扫描总开关 / 强制签名 / 漏洞库拦截）、保留清理策略（软删除包可恢复天数、日志文件保留天数，均默认 `30` / `180` 天，填 `0` 表示不自动清理）、包文件备份（启用开关、同步间隔）、缺包自动上报，以及**上传包大小上限**（npm / PyPI 分别设置，默认 200MB，用于放行大型离线插件包；控制台以 MB 为单位输入，系统内部按字节存储与校验；不得超过 env 的 HTTP 硬天花板）。保存后写入 `sys_dictionary` 表持久化并即时生效（业务模块经 `getConfig()` 读取 env 基线 + 字典覆盖的合并结果，无需重启）；三角色共享同一数据库，覆盖层按 `DICTIONARY_SYNC_INTERVAL_MS`（默认 1000ms）自动回读，控制台的变更会同步到 npm / pypi 进程，不需要逐容器重启。每次变更落审计日志（`config.dictionary.update`）。API：`GET/PUT /api/v1/dictionary`。
+
+「用户手册」所有登录用户只读，管理员可在页面内点「编辑手册」修改章节内容并保存，普通用户下次进入即看到同一份内容。覆盖项按章节存 `user_manual` 表，未改过的章节用内置静态手册；「恢复默认」清空全部覆盖。写入时服务端按白名单清洗 HTML，脚本、事件属性与 `javascript:` 链接不会落库；每次保存写审计 `manual.content.update`。API：`GET/PUT /api/v1/manual/content`（PUT 需要 `config:manage`）。
 
 保留期清理由控制台进程的 `RetentionScheduler` 每小时执行一轮（可用 `RETENTION_SWEEP_INTERVAL_MS` 调整）：软删除版本超期后连同对象文件、扫描记录及报告一起硬删除，包内版本被删光的包壳一并回收；日志清理只处理 `LOG_DIR` 下的日志文件，目录内其它文件不动。清理动作写审计（`retention.packages.purge`）。
 

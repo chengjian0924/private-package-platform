@@ -50,6 +50,7 @@ export const ERROR_DEFS: Record<string, ErrorDef> = {
   PKG_TARBALL_INVALID: { status: 400, message: 'npm 包文件无法解析' },
   PKG_METADATA_MISMATCH: { status: 400, message: '包内元数据与清单不一致' },
   PKG_RUNTIME_INCOMPATIBLE: { status: 400, message: '包与目标运行时版本不兼容' },
+  // 以下两项为历史遗留：入库阶段已不再做跨包依赖判定，保留仅为兼容已有批次报告中的 reasonCodes
   PKG_DEP_UNRESOLVED: { status: 400, message: '依赖项在私有源中无法解析' },
   PKG_DEP_INCOMPATIBLE: { status: 400, message: '依赖版本范围无法满足' },
   PKG_YANKED: { status: 409, message: '该版本已撤回' },

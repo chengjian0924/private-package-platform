@@ -10,6 +10,7 @@ import { BackupScheduler } from './maintenance/backup.scheduler';
 import { BackupService } from './maintenance/backup.service';
 import { RetentionScheduler } from './maintenance/retention.scheduler';
 import { RetentionService } from './maintenance/retention.service';
+import { ManualController } from './manual/manual.controller';
 import { MissingController } from './missing/missing.controller';
 import { PackagesController } from './packages/packages.controller';
 import { SecurityController } from './security/security.controller';
@@ -29,6 +30,7 @@ import { SecurityScheduler } from './security/scheduler';
     AuditController,
     SecurityController,
     DictionaryController,
+    ManualController,
   ],
   providers: [
     ImportService,

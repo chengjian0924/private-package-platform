@@ -324,6 +324,15 @@ CREATE TABLE IF NOT EXISTS sys_dictionary (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
+
+-- 用户手册：管理员编辑的章节 HTML 覆盖项；未登记的章节继续用内置静态内容
+CREATE TABLE IF NOT EXISTS user_manual (
+  section_id TEXT PRIMARY KEY,
+  html TEXT NOT NULL,
+  updated_by TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
 `;
 
 /**

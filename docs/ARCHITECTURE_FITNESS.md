@@ -385,8 +385,8 @@ B5（出站/CA/NTP）─> 安全验证 ─> B6（隔离区加固）
 | --- | --- | --- |
 | `NODE_ENV` | `production` | `development` |
 | `BOOTSTRAP_ADMIN_USERNAME` | `admin`（或单位约定名） | `admin` |
-| `BOOTSTRAP_ADMIN_PASSWORD` | 一次性强口令（≥12 位、不含用户名、非弱口令）；建号后移除 | 开发示例值 |
-| `PASSWORD_MIN_LENGTH` / `LOGIN_MAX_FAILURES` / `LOGIN_LOCK_MINUTES` | `12` / `5` / `15` | 同左 |
+| `BOOTSTRAP_ADMIN_PASSWORD` | 一次性强口令（≥8 位、不含用户名、非弱口令）；建号后移除 | 开发示例值 |
+| `PASSWORD_MIN_LENGTH` / `LOGIN_MAX_FAILURES` / `LOGIN_LOCK_MINUTES` | `8` / `5` / `15` | 同左 |
 | `PUBLIC_BASE_URL` | 网关 HTTPS 地址；直连 HTTP 时须同时设置 `ALLOW_INSECURE_BASE_URL=true`（见 §12） | `http://localhost:3000` |
 | `DATA_DIR` | 本地 SSD 独立分区 | `./data/dev` |
 | `SECURITY_RESCAN_INTERVAL_SEC` | 按窗口设定（建议低峰） | `86400` |

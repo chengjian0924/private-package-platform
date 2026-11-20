@@ -14,13 +14,11 @@ import {
   type RuntimeTargets,
 } from '../packages/package-validator';
 import {
-  normalizeName,
   normalizeVersion,
   PackagesService,
   type Ecosystem,
 } from '../packages/packages.service';
 import { StorageService } from '../storage/storage.service';
-import { MissingService } from '../missing/missing.service';
 import { SecurityService } from '../security/security.service';
 import type { SecurityFinding } from '../security/types';
 import { getConfig } from '../config/config';
@@ -114,7 +112,6 @@ export class ImportService {
     private readonly db: DatabaseService,
     private readonly storage: StorageService,
     private readonly packages: PackagesService,
-    private readonly missing: MissingService,
     private readonly security: SecurityService,
   ) {}
 
@@ -302,7 +299,6 @@ export class ImportService {
     const items = this.loadItems(batchId);
     const targets = safeJson<RuntimeTargets>(batch.targets, {});
     const targetIssues = this.missingTargets(items, targets);
-    const batchVersions = new Map<string, string[]>();
 
     let validCount = 0;
     let invalidCount = 0;
@@ -337,10 +333,6 @@ export class ImportService {
       }
 
       const existsInRegistry = Boolean(this.packages.findVersion(item.ecosystem, item.name, item.version));
-      const resolveVersions = (depName: string) => {
-        const key = normalizeName('npm', depName);
-        return [...this.packages.availableVersions('npm', key), ...(batchVersions.get(key) || [])];
-      };
 
       let outcome;
       if (item.ecosystem === 'npm') {
@@ -351,7 +343,6 @@ export class ImportService {
           declaredSha256: item.sha256 ?? undefined,
           existsInRegistry,
           targets,
-          resolveVersions,
         });
       } else {
         const requiresPython = String(detail.metadata?.requiresPython || '') || undefined;
@@ -376,13 +367,6 @@ export class ImportService {
       if (!issues.some((i) => i.severity === 'error')) {
         const securityIssue = await this.attachSecurityPreview(item, buffer, detail, outcome.digests.sha256);
         if (securityIssue) issues.push(securityIssue);
-      }
-
-      if (item.ecosystem === 'npm' && outcome.status === 'valid') {
-        const key = normalizeName('npm', item.name);
-        const list = batchVersions.get(key) || [];
-        list.push(item.version);
-        batchVersions.set(key, list);
       }
 
       if (issues.some((i) => i.severity === 'error')) {
@@ -559,7 +543,6 @@ export class ImportService {
     let committed = 0;
     let failed = 0;
     let skipped = 0;
-    const unresolvedDeps: string[] = [];
 
     for (const item of items) {
       const detail = safeJson<ItemDetail>(item.detail, {});
@@ -593,16 +576,6 @@ export class ImportService {
           item.id,
         );
         committed++;
-
-        const issues = detail.issues || [];
-        if (item.ecosystem === 'npm') {
-          const deps = (detail.metadata?.dependencies as Record<string, string> | null) || null;
-          if (deps && issues.some((i) => i.code === 'PKG_DEP_UNRESOLVED')) {
-            for (const depName of Object.keys(deps)) {
-              if (this.packages.availableVersions('npm', depName).length === 0) unresolvedDeps.push(depName);
-            }
-          }
-        }
       } catch (err) {
         failed++;
         const reason = err instanceof ApiError ? err.code : 'SYS_INTERNAL';
@@ -618,10 +591,6 @@ export class ImportService {
           item.id,
         );
       }
-    }
-
-    if (unresolvedDeps.length > 0) {
-      this.missing.reportSilently('npm', unresolvedDeps, `batch:${batchId}`);
     }
 
     const stats = {

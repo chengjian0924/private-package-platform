@@ -9,6 +9,7 @@ import { DatabaseService } from './db/database.service';
 import { DictionaryService } from './dictionary/dictionary.service';
 import { HealthController } from './health.controller';
 import { MetricsController, MetricsService } from './metrics/metrics';
+import { ManualService } from './manual/manual.service';
 import { MissingService } from './missing/missing.service';
 import { PackagesService } from './packages/packages.service';
 import { SecurityService } from './security/security.service';
@@ -26,6 +27,7 @@ const SHARED = [
   ClockService,
   DatabaseService,
   DictionaryService,
+  ManualService,
   StorageService,
   AuditService,
   TelemetryService,

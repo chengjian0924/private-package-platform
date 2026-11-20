@@ -543,7 +543,13 @@
       <!-- 用户手册：所有登录用户可见的静态操作指引 -->
       <section id="view-manual" class="view hidden manual">
         <div class="manual-toc card">
-          <div class="card-head"><h3>目录</h3></div>
+          <div class="card-head">
+            <h3>目录</h3>
+            <div class="spacer"></div>
+            <button type="button" id="manual-edit-toggle" class="btn small hidden">编辑手册</button>
+            <button type="button" id="manual-save" class="btn primary small hidden">保存修改</button>
+            <button type="button" id="manual-defaults" class="btn ghost small hidden">恢复默认</button>
+          </div>
           <div class="manual-toc-links" id="manual-toc-links"></div>
         </div>
 
@@ -615,7 +621,7 @@ twine upload --repository-url http://&lt;host&gt;:3000/pypi/ dist/*</code></pre>
           <ol class="manual-steps">
             <li>点「上传包文件」卡片中的虚线框选择或拖入包文件，点「上传并自动识别」。顶部显示批次号，结果区列出识别出的包名、版本与生态。</li>
             <li>在「全量校验&amp;入库」卡片选择入库模式：<code>partial</code>（跳过失败项，默认）或 <code>strict</code>（有失败即整批中止）。</li>
-            <li>点「开始校验」，表格逐条显示校验结果。校验覆盖：文件完整性/SHA256、版本号合法性（npm semver / PyPI PEP 440）、重复版本、依赖兼容性、运行时目标提示。</li>
+            <li>点「开始校验」，表格逐条显示校验结果。校验覆盖：文件完整性/SHA256、版本号合法性（npm semver / PyPI PEP 440）、重复版本、运行时目标提示；依赖声明只做透传，<b>不判定跨包兼容性</b>（由下游客户端安装时按需解析）。</li>
             <li>核对无误后点「批量入库」，成功后提示入库数量，可在「包管理」检索到；点「下载报告」获取 CSV 逐条结果。</li>
           </ol>
           <p class="manual-expect"><b>预期：</b>识别后预览区给出包数与新增版本数；校验失败项显示具体原因码；strict 模式存在失败项时整批拒绝并返回 <code>BATCH_HAS_BLOCKING_ITEMS</code>。</p>
@@ -696,6 +702,7 @@ twine upload --repository-url http://&lt;host&gt;:3000/pypi/ dist/*</code></pre>
             <li>列表里机器账号带 <code>CI</code> 标签、凭据列显示「仅令牌」；「重置密码」对它不可用，换令牌即可。</li>
             <li><b>禁用</b>（临时停用）：该账号所有会话立即失效，令牌同时不可用，但凭据仍保留——重新启用后自动恢复，可随时回滚。管理员账号唯一，不提供禁用、改角色与重置密码。</li>
             <li><b>吊销令牌</b>（永久断开）：离职、凭据泄露或项目下线时，点该行「吊销令牌」，该账号名下所有令牌立即作废且无法恢复，重新启用账号也不会复活，只能重新签发。凭据列会显示每个账号还有几个未吊销令牌，禁用状态下标为橙色。</li>
+            <li><b>编辑用户手册</b>：在「用户手册」页点「编辑手册」，管理员可修改各章节内容并点「保存修改」；保存后所有登录用户下次进入即可看到。「恢复默认」清除全部修改。服务端会过滤脚本、事件属性与 <code>javascript:</code> 链接。</li>
           </ol>
           <p class="manual-note"><b>注意</b>：审计日志按 Token 名筛选，因此令牌命名要能唯一对应项目，否则事后无法归因。</p>
         </div>

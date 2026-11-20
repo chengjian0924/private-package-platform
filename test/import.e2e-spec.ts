@@ -14,7 +14,7 @@ describe('A1 批量导入与全量校验（e2e）', () => {
   });
 
   it('上传包自动识别 → 全量校验 → partial 入库 → 报告下载', async () => {
-    // engines 声明超出默认 Node target，制造校验失败项验证 partial 跳过逻辑
+    // 通用源：engines 超出默认 Node target 只告警不拦截，两个包都应入库
     const good = await makeNpmTarball('e2e-lib', '1.0.0', {
       engines: { node: '>=18' },
       description: '批量导入测试包',
@@ -37,15 +37,16 @@ describe('A1 批量导入与全量校验（e2e）', () => {
       .post(`/api/v1/import-batches/${batchId}/validate`)
       .auth(ADMIN.username, ADMIN.password)
       .expect(201);
-    expect(validated.body.data.stats.valid).toBe(1);
-    expect(validated.body.data.stats.invalid).toBe(1);
+    expect(validated.body.data.stats.valid).toBe(2);
+    expect(validated.body.data.stats.invalid).toBe(0);
 
     const batch = await request(ctx.baseUrl)
       .get(`/api/v1/import-batches/${batchId}`)
       .auth(ADMIN.username, ADMIN.password)
       .expect(200);
     const items = batch.body.data.items as { name: string; status: string; reasonCodes: string[] }[];
-    expect(items.map((item) => item.status)).toEqual(['VALID', 'INVALID']);
+    expect(items.map((item) => item.status)).toEqual(['VALID', 'VALID']);
+    // engines 不兼容仅作提示：reasonCodes 会记录该 code，但条目仍是 VALID
     expect(items[1].reasonCodes).toContain('PKG_RUNTIME_INCOMPATIBLE');
 
     const committed = await request(ctx.baseUrl)
@@ -53,7 +54,7 @@ describe('A1 批量导入与全量校验（e2e）', () => {
       .auth(ADMIN.username, ADMIN.password)
       .send({ mode: 'partial' })
       .expect(201);
-    expect(committed.body.data.stats).toMatchObject({ committed: 1, skipped: 1, failed: 0 });
+    expect(committed.body.data.stats).toMatchObject({ committed: 2, skipped: 0, failed: 0 });
 
     const report = await request(ctx.baseUrl)
       .get(`/api/v1/import-batches/${batchId}/report?format=csv`)
@@ -69,7 +70,7 @@ describe('A1 批量导入与全量校验（e2e）', () => {
       .expect(200);
     const names = (packages.body.data.items as { name: string }[]).map((item) => item.name);
     expect(names).toContain('e2e-lib');
-    expect(names).not.toContain('e2e-lib-bad');
+    expect(names).toContain('e2e-lib-bad');
   });
 
   it('批量 8 个包全部通过校验并完成入库', async () => {
@@ -100,8 +101,18 @@ describe('A1 批量导入与全量校验（e2e）', () => {
   });
 
   it('strict 模式遇到失败项时中止入库', async () => {
-    // engines 不满足默认 target：识别阶段正常，校验阶段判 invalid
-    const bad = await makeNpmTarball('e2e-strict', '1.0.0', { engines: { node: '>=99' } });
+    // 用重复版本制造真实结构 INVALID（engines 不兼容已降为通用源提示，不再拦截）
+    const existing = await makeNpmTarball('e2e-strict', '1.0.0');
+    await request(ctx.baseUrl)
+      .put('/npm/e2e-strict')
+      .auth(ADMIN.username, ctx.npmTokens[ADMIN.username])
+      .send({
+        name: 'e2e-strict',
+        versions: { '1.0.0': { version: '1.0.0' } },
+        _attachments: { 'e2e-strict-1.0.0.tgz': { data: existing.toString('base64') } },
+      })
+      .expect(201);
+    const bad = await makeNpmTarball('e2e-strict', '1.0.0');
 
     const created = await request(ctx.baseUrl)
       .post('/api/v1/import-batches/auto')
@@ -258,5 +269,65 @@ describe('A1 批量导入与全量校验（e2e）', () => {
       .send({ mode: 'partial' })
       .expect(201);
     expect(committed.body.data.stats.committed).toBe(2);
+  });
+
+  it('依赖版本与已入库集合不兼容仍可入库，依赖声明原样透传给下游解析', async () => {
+    // 第一步：先入库一个「旧版本」依赖包
+    const oldDep = await makeNpmTarball('e2e-compat-dep', '1.0.0', { engines: { node: '>=18' } });
+    const first = await request(ctx.baseUrl)
+      .post('/api/v1/import-batches/auto')
+      .auth(ADMIN.username, ADMIN.password)
+      .attach('files', oldDep, 'e2e-compat-dep-1.0.0.tgz')
+      .expect(201);
+    const firstId = first.body.data.batchId as string;
+    await request(ctx.baseUrl)
+      .post(`/api/v1/import-batches/${firstId}/validate`)
+      .auth(ADMIN.username, ADMIN.password)
+      .expect(201);
+    await request(ctx.baseUrl)
+      .post(`/api/v1/import-batches/${firstId}/commit`)
+      .auth(ADMIN.username, ADMIN.password)
+      .send({ mode: 'partial' })
+      .expect(201);
+
+    // 第二步：消费方声明 ^2.0.0，库里只有 1.0.0；另有一个完全没导入的依赖
+    // 旧逻辑会判 PKG_DEP_INCOMPATIBLE(error) → INVALID → partial 提交时被跳过
+    const dependencies = { 'e2e-compat-dep': '^2.0.0', 'never-imported-dep': '^1.0.0' };
+    const consumer = await makeNpmTarball('e2e-compat-consumer', '1.0.0', {
+      engines: { node: '>=18' },
+      dependencies,
+      peerDependencies: { 'e2e-compat-dep': '^2.0.0' },
+    });
+    const created = await request(ctx.baseUrl)
+      .post('/api/v1/import-batches/auto')
+      .auth(ADMIN.username, ADMIN.password)
+      .attach('files', consumer, 'e2e-compat-consumer-1.0.0.tgz')
+      .expect(201);
+    const batchId = created.body.data.batchId as string;
+
+    const validated = await request(ctx.baseUrl)
+      .post(`/api/v1/import-batches/${batchId}/validate`)
+      .auth(ADMIN.username, ADMIN.password)
+      .expect(201);
+    expect(validated.body.data.stats).toMatchObject({ valid: 1, invalid: 0 });
+
+    const batch = await request(ctx.baseUrl)
+      .get(`/api/v1/import-batches/${batchId}`)
+      .auth(ADMIN.username, ADMIN.password)
+      .expect(200);
+    expect(batch.body.data.items[0].status).toBe('VALID');
+    expect(batch.body.data.items[0].reasonCodes).not.toContain('PKG_DEP_INCOMPATIBLE');
+    expect(batch.body.data.items[0].reasonCodes).not.toContain('PKG_DEP_UNRESOLVED');
+
+    const committed = await request(ctx.baseUrl)
+      .post(`/api/v1/import-batches/${batchId}/commit`)
+      .auth(ADMIN.username, ADMIN.password)
+      .send({ mode: 'partial' })
+      .expect(201);
+    expect(committed.body.data.stats).toMatchObject({ committed: 1, skipped: 0, failed: 0 });
+
+    // 依赖声明仍要出现在 packument 里，下游 npm 客户端才能按需解析版本
+    const packument = await request(ctx.baseUrl).get('/npm/e2e-compat-consumer').expect(200);
+    expect(packument.body.versions['1.0.0'].dependencies).toEqual(dependencies);
   });
 });

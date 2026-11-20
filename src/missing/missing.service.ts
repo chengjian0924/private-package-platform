@@ -118,22 +118,6 @@ export class MissingService {
     return { created, updated, skipped, items: this.list({ pageSize: 100 }).items };
   }
 
-  /** 批量导入过程中发现无法解析的依赖时静默登记，不影响入库 */
-  reportSilently(ecosystem: Ecosystem, names: string[], projectId: string): void {
-    try {
-      const unique = Array.from(new Set(names));
-      if (unique.length === 0) return;
-      this.report({
-        ecosystem,
-        projectId,
-        source: 'import',
-        dependencies: unique.map((name) => ({ name, versionSpec: '*' })),
-      });
-    } catch (err) {
-      this.logger.warn(`缺失依赖登记失败: ${(err as Error).message}`);
-    }
-  }
-
   /**
    * A 兜底：下游把本平台设为源后拉取失败（404），由 registry controller 静默调用。
    * 同包同版本要求聚合到一条，只更新最后一次请求方元数据；开关关闭时不新增。
@@ -285,7 +269,6 @@ export class MissingService {
             version,
             existsInRegistry: Boolean(this.packages.findVersion('npm', name, version)),
             targets: {},
-            resolveVersions: () => [],
           })
         : validatePypiPackage({
             buffer,

@@ -2237,7 +2237,7 @@ textarea.input {
 }
 
 /* ========== 用户手册 ========== */
-.manual { max-width: 1080px; }
+/* 与其它视图一致铺满主内容区：宽屏下不再因固定限宽而在右侧留下空白 */
 .manual > .card { margin-bottom: 16px; }
 .manual-toc-links {
   display: flex;
@@ -2317,6 +2317,33 @@ textarea.input {
 }
 .manual .table { min-width: 620px; }
 .manual .table td { font-size: var(--fs-xs); line-height: var(--lh); }
+
+/* 手册编辑：管理员在章节末尾直接编辑 HTML 源片段，普通用户看不到 */
+.manual-edit-area {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--line-strong);
+}
+.manual-edit-area textarea {
+  width: 100%;
+  min-height: 180px;
+  box-sizing: border-box;
+  padding: 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm, 8px);
+  background: var(--surface);
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+  resize: vertical;
+}
+.manual-edit-area textarea:focus {
+  outline: 0;
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
+}
+.manual-edit-area textarea.manual-changed { border-color: var(--warn); }
 
 /* ========== 动效降级 ========== */
 @media (prefers-reduced-motion: reduce) {

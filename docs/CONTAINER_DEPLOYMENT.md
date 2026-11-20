@@ -5,7 +5,7 @@
 | 项 | 本方案取值 |
 | --- | --- |
 | 进程形态 | console / npm / pypi 三容器拆分，后台任务只在 console 跑一次 |
-| 对外入口 | 三端口直连，无网关：控制台 `:3000`、npm `:3001`、pypi `:3002` |
+| 对外入口 | 三端口直连，无网关：控制台 `:8860`、npm `:8861`、pypi `:8862` |
 | 网关 | `deploy/nginx-container.conf` 已预留但**默认不启用**（compose 的 `gateway` profile） |
 | TLS | HTTP 直连，显式 `ALLOW_INSECURE_BASE_URL=true`，启动日志会打印明文风险告警 |
 | 运维调度 | 宿主 cron 调用临时容器执行 `backup.sh` / `audit-dump.mjs` |
@@ -39,12 +39,12 @@ nginx(gateway profile) ──▶ console + npm + pypi
 
 | 端口 | 所属 | 用途 |
 | --- | --- | --- |
-| `3000:3000` | console | Web 控制台 + 管理 API + `/api/v1/health`；浏览器和用户操作入口 |
-| `3001:3000` | npm | npm registry 协议，客户端配 `registry=http://<host>:3001/npm/` |
-| `3002:3000` | pypi | PyPI 协议，pip/twine 配 `-i http://<host>:3002/pypi/simple/` |
+| `8860:3000` | console | Web 控制台 + 管理 API + `/api/v1/health`；浏览器和用户操作入口 |
+| `8861:3000` | npm | npm registry 协议，客户端配 `registry=http://<host>:8861/npm/` |
+| `8862:3000` | pypi | PyPI 协议，pip/twine 配 `-i http://<host>:8862/pypi/simple/` |
 | `80` / `443` | nginx（预留） | 仅网关模式启用：80 跳转 443，443 终止 TLS 后按路径分流 |
 
-> 容器内三个进程监听的都是 **3000**（`PORT=3000`），宿主机映射到 3000/3001/3002。改宿主端口只需改 compose 的 `ports` 左侧，同时同步 `.env.production` 里的三个基址。
+> 容器内三个进程监听的都是 **3000**（`PORT=3000`），宿主机映射到 8860/8861/8862。改宿主端口只需改 compose 的 `ports` 左侧，同时同步 `.env.production` 里的三个基址。
 
 | 卷 | 容器内路径 | 用途 | 关键点 |
 | --- | --- | --- | --- |
@@ -58,7 +58,7 @@ nginx(gateway profile) ──▶ console + npm + pypi
 - Docker Engine ≥ 24 且 Compose v2 插件可用（`docker compose version`）。
 - **支持两种目标架构**：`linux/arm64`（aarch64，配置在 `docker/arm64/`）与 `linux/amd64`（x86_64，配置在 `docker/amd64/`）。两套配置完全对称、互不覆盖；各自的 compose 已为所有服务声明对应 `platform`，镜像 tag 分别为 `yuanjian:arm64` 与 `yuanjian:amd64`。选择依据见 `docker/README.md`。
 - 构建机可访问 npm registry 拉取基础镜像与依赖；运行机可断网，用 `docker save/load` 传入镜像。
-- 宿主机开放 3000/3001/3002 三个内网端口；按内网安全策略限制来源网段。
+- 宿主机开放 8860/8861/8862 三个内网端口；按内网安全策略限制来源网段。
 - 磁盘：数据卷预留空间不低于业务预期；隔离样本单独卷，便于排除出常规备份。
 
 架构兼容性已核对：`node:22-bookworm-slim` 与 `nginx:1.27-alpine` 均提供 arm64 / amd64 变体；应用运行时依赖（NestJS、adm-zip、exceljs、tar、semver、rxjs 等）全是纯 JS，无 `node-gyp` 原生编译模块；数据库走 Node 22 内置的 `node:sqlite`，不依赖架构特定的二进制。`fsevents` 仅 macOS 生效，Linux 构建时会被 npm 跳过。
@@ -106,10 +106,10 @@ docker compose up -d
 
 | 变量 | 要求 |
 | --- | --- |
-| `PUBLIC_BASE_URL` | `http://<内网可达地址>:3000`，**不要写 `127.0.0.1`**（那是容器回环） |
-| `NPM_BASE_URL` | `http://<同一地址>:3001`——漏配会让 packument 的 tarball 指回控制台端口，安装 404 |
-| `PYPI_BASE_URL` | `http://<同一地址>:3002`——漏配会让 simple 索引下载地址错误 |
-| `INITIAL_PASSWORD_ADMIN` | 一次性强口令，≥12 位且不含用户名；**首次改密后从文件删除该行** |
+| `PUBLIC_BASE_URL` | `http://<内网可达地址>:8860`，**不要写 `127.0.0.1`**（那是容器回环） |
+| `NPM_BASE_URL` | `http://<同一地址>:8861`——漏配会让 packument 的 tarball 指回控制台端口，安装 404 |
+| `PYPI_BASE_URL` | `http://<同一地址>:8862`——漏配会让 simple 索引下载地址错误 |
+| `INITIAL_PASSWORD_ADMIN` | 一次性强口令，≥8 位且不含用户名；**首次改密后从文件删除该行** |
 | `INITIAL_PASSWORD_USER` | 普通账号一次性初始口令，同上 |
 
 其余**无需修改**、已预置：`METRICS_TOKEN`（随机 64 位 hex，**不要清空**，作用与轮换见 `docs/OFFLINE_DEPLOY_CONTAINER.md` 第 3.1 节）、`ALLOW_INSECURE_BASE_URL=true`、`DEFAULT_NODE_TARGET=22.23.5` / `DEFAULT_PYTHON_TARGET=3.11.9`、数据目录及安全/限流/日志参数。备份目录与 cron 属上线后可选运维，不配置不影响启动（见第 6 节）。
@@ -183,16 +183,16 @@ docker compose down -v                            # 连同数据卷一起删除�
 HOST=yuanjian.example.internal   # 换成真实内网地址
 
 # 1) 三端口健康
-for p in 3000 3001 3002; do curl -fsS "http://$HOST:$p/api/v1/health" | head -c 200; echo; done
+for p in 8860 8861 8862; do curl -fsS "http://$HOST:$p/api/v1/health" | head -c 200; echo; done
 
 # 2) npm 协议入口
-npm config set registry "http://$HOST:3001/npm/"
+npm config set registry "http://$HOST:8861/npm/"
 npm view <已入库包名> version
 
 # 3) pypi 协议入口
-pip index versions <已入库包名> -i "http://$HOST:3002/pypi/simple/"
+pip index versions <已入库包名> -i "http://$HOST:8862/pypi/simple/"
 
-# 4) 控制台首登：浏览器打开 http://$HOST:3000/，用初始管理员登录并强制改密
+# 4) 控制台首登：浏览器打开 http://$HOST:8860/，用初始管理员登录并强制改密
 # 5) 改密后从 .env.production 删除 INITIAL_PASSWORD_ADMIN，再 docker compose up -d 重建容器
 ```
 
@@ -265,7 +265,7 @@ docker run --rm \
 
 1. 把内网 CA 签发的证书放到 `deploy/certs/`（`yuanjian.example.internal.crt` / `.key`），并在 `deploy/nginx-container.conf` 中确认 `server_name` 与证书路径一致。
 2. 修改 `deploy/.env.production`：三个基址改为 `https://<网关域名>`（不带端口），**删除** `ALLOW_INSECURE_BASE_URL=true`。
-3. 修改所选架构的 `docker/<ARCH>/docker-compose.yml`：把三个应用的 `ports` 改为仅本机可见，例如 `127.0.0.1:3000:3000`（网关容器通过内部网络访问 `console:3000`，不依赖宿主映射）。
+3. 修改所选架构的 `docker/<ARCH>/docker-compose.yml`：把三个应用的 `ports` 改为仅本机可见，例如 `127.0.0.1:8860:3000`（网关容器通过内部网络访问 `console:3000`，不依赖宿主映射）。
 4. 启动：
 
 ```bash
@@ -281,7 +281,7 @@ docker run --rm \
 | 配置位置 | `/opt/yuanjian/.env.production` | `deploy/.env.production` |
 | 初始密码变量 | 沿用既有 `.env.production` 配置 | `INITIAL_PASSWORD_ADMIN` / `INITIAL_PASSWORD_USER` |
 | `BIND_HOST` | 网关形态 `127.0.0.1` | `0.0.0.0`（隔离由容器网络负责） |
-| 端口 | 按角色默认 3000/3001/3002 | 容器内统一 3000，宿主映射 3000/3001/3002 |
+| 端口 | 按角色默认 3000/3001/3002 | 容器内统一 3000，宿主映射 8860/8861/8862 |
 | 日志 | journald | `docker logs` / 日志驱动采集 stdout |
 | 自愈 | `Restart=always` | `restart: unless-stopped` |
 | 备份 | 宿主脚本直连数据目录 | 宿主 cron 调临时容器挂卷执行 |
@@ -295,7 +295,7 @@ docker run --rm \
 # 替换镜像：重新构建，或 docker load 新版镜像后改 compose 的 image tag
 ./scripts/docker-build.sh "$ARCH" build --no-cache
 ./scripts/docker-build.sh "$ARCH" up
-for p in 3000 3001 3002; do curl -fsS "http://$HOST:$p/api/v1/health" >/dev/null && echo "$p ok"; done
+for p in 8860 8861 8862; do curl -fsS "http://$HOST:$p/api/v1/health" >/dev/null && echo "$p ok"; done
 ```
 
 回滚：停服 → 切回旧镜像（tag 或重新 load）→ 若涉及数据库结构变更，先按第 6 节恢复升级前备份 → 启动。**禁止用 `docker kill` 常规停服**，会跳过 A-07 优雅排空。

@@ -81,10 +81,10 @@ docker compose up -d
 
 | 变量 | 改成 | 不改的后果 |
 | --- | --- | --- |
-| `PUBLIC_BASE_URL` | `http://<服务器内网IP>:3000` | 客户端拿不到正确地址；**不要写 `127.0.0.1`**（容器回环） |
-| `NPM_BASE_URL` | `http://<同一IP>:3001` | packument 的 tarball 指回控制台，npm 安装 404 |
-| `PYPI_BASE_URL` | `http://<同一IP>:3002` | simple 索引的下载地址错误 |
-| `INITIAL_PASSWORD_ADMIN` | 一次性强口令，≥12 位且不含用户名 | 占位串无法登录；**首次改密后删除该行并重建容器** |
+| `PUBLIC_BASE_URL` | `http://<服务器内网IP>:8860` | 客户端拿不到正确地址；**不要写 `127.0.0.1`**（容器回环） |
+| `NPM_BASE_URL` | `http://<同一IP>:8861` | packument 的 tarball 指回控制台，npm 安装 404 |
+| `PYPI_BASE_URL` | `http://<同一IP>:8862` | simple 索引的下载地址错误 |
+| `INITIAL_PASSWORD_ADMIN` | 一次性强口令，≥8 位且不含用户名 | 占位串无法登录；**首次改密后删除该行并重建容器** |
 | `INITIAL_PASSWORD_USER` | 一次性初始口令 | 普通账号初始口令，同上 |
 
 **已预置、无需修改**：
@@ -93,7 +93,7 @@ docker compose up -d
 | --- | --- | --- |
 | `METRICS_TOKEN` | 随机 64 位 hex | 见 3.1；**不要清空** |
 | `ALLOW_INSECURE_BASE_URL` | `true` | HTTP 直连必须保留，否则生产护栏拒绝启动并打印明文告警 |
-| `DEFAULT_NODE_TARGET` / `DEFAULT_PYTHON_TARGET` | `22.23.5` / `3.11.9` | 必须是具体版本号，写成 `>=18` 会让带 engines 的包全部误判不兼容，见第 8 节 |
+| `DEFAULT_NODE_TARGET` / `DEFAULT_PYTHON_TARGET` | `22.23.5` / `3.11.9` | 建议填具体版本号；仅用于兼容性提示，不影响入库（通用源，由客户端挑选包），见第 8 节 |
 | `DATA_DIR` / `QUARANTINE_DIR` | 容器内绝对路径 | 已对应 compose 的 named volume，勿改 |
 | 安全 / 限流 / 日志参数 | 生产默认值 | 均可在控制台「字典管理」运行时覆盖 |
 
@@ -122,7 +122,7 @@ docker compose up -d            # env_file 变化会触发容器重建，使新�
 
 # 验证：带令牌应返回 yj_* 文本，不带令牌应返回 401
 TOKEN=$(grep '^METRICS_TOKEN=' deploy/.env.production | cut -d= -f2)
-curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:3000/metrics | head
+curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8860/metrics | head
 ```
 
 Prometheus 抓取配置须与 `.env.production` 中的值一致：
@@ -132,12 +132,12 @@ scrape_configs:
   - job_name: yuanjian
     scrape_interval: 30s
     static_configs:
-      - targets: ['127.0.0.1:3000']
+      - targets: ['127.0.0.1:8860']
     authorization:
       credentials: "<METRICS_TOKEN>"
 ```
 
-> HTTP 直连形态下 3000 端口对外可达，`/metrics` 也随之暴露：除令牌外还须用防火墙把 3000 收敛到 Prometheus / 研发网段。切到网关模式后 `deploy/nginx-container.conf` 会让 `/metrics` 返回 404，此时 Prometheus 应在容器内直连 `console:3000/metrics` 并携带令牌。
+> HTTP 直连形态下 8860 端口对外可达，`/metrics` 也随之暴露：除令牌外还须用防火墙把 8860 收敛到 Prometheus / 研发网段。切到网关模式后 `deploy/nginx-container.conf` 会让 `/metrics` 返回 404，此时 Prometheus 应在容器内直连 `console:3000/metrics` 并携带令牌。
 
 ## 4. 启动与停止
 
@@ -189,14 +189,14 @@ docker compose down -v                    # 连数据卷一起删（危险，先
 ```bash
 docker compose ps
 # 三服务均 running (healthy)
-docker port yuanjian-console   # 3000/tcp -> 0.0.0.0:3000
-docker port yuanjian-npm       # 3000/tcp -> 0.0.0.0:3001
-docker port yuanjian-pypi      # 3000/tcp -> 0.0.0.0:3002
+docker port yuanjian-console   # 3000/tcp -> 0.0.0.0:8860
+docker port yuanjian-npm       # 3000/tcp -> 0.0.0.0:8861
+docker port yuanjian-pypi      # 3000/tcp -> 0.0.0.0:8862
 ```
 
 ### 5.2 容器内健康检查（最可靠）
 
-若宿主机已有其他服务占用 3000 端口，`curl 127.0.0.1:3000` 可能打到错误进程。**始终用容器内探活判定**：
+若宿主机已有其他服务占用 8860 端口，`curl 127.0.0.1:8860` 可能打到错误进程。**始终用容器内探活判定**：
 
 ```bash
 for s in console npm pypi; do
@@ -309,9 +309,9 @@ docker compose ps    # 确认 healthy
 | --- | --- |
 | 只改了 5 项就 `up -d`，没建备份目录、没管 METRICS_TOKEN | **正常**。令牌已预置在模板中，备份属可选运维，两者都不影响启动。只有三个基址和初始口令必须按内网实际填写 |
 | 容器反复重启，日志「生产环境配置校验未通过」 | 三个基址必须是 `http://`（或配 https 并移除豁免）；镜像内 Node ≥22.5（**由镜像提供，宿主无需安装**）；数据目录可写。查 `docker compose logs console` |
-| 健康端点 `env=development` 或 `dataDir` 是宿主路径 | `curl 127.0.0.1:3000` 打到了宿主机残留进程。用第 5.2 节的容器内探活判定，别被误导 |
+| 健康端点 `env=development` 或 `dataDir` 是宿主路径 | `curl 127.0.0.1:8860` 打到了宿主机残留进程。用第 5.2 节的容器内探活判定，别被误导 |
 | npm 安装 404、tarball 地址指向控制台 | `NPM_BASE_URL` / `PYPI_BASE_URL` 漏配；查健康端点 `endpoints` 字段 |
-| **包校验报 `engines.node=... 不满足目标 Node ...`** | `DEFAULT_NODE_TARGET` 必须是具体版本号（如 `22.23.5`），写成 `>=18` 会让所有带 engines 的包被误判不兼容、无法入库。这是本次实测发现并已修正的模板问题 |
+| 包校验提示 `engines.node=... 与默认目标 Node ... 不一致` | **正常提示，不阻断入库**。平台为通用源，运行时元数据只告警，由 `npm` 按客户端环境挑选。写成 `>=18` 这类范围值会让提示文案失真（建议填具体版本号如 `22.23.5`），但不再导致无法入库 |
 | 批次校验 valid=0 且无上述错误 | 查批次明细 `GET /api/v1/import-batches/<id>` 的 `reasonCodes`；重复版本是 `PKG_VERSION_DUPLICATE`，换包名重测 |
 | `database is locked` | 卷必须是本地卷，禁止 NFS/跨主机；确认只有一个 compose 项目操作该卷 |
 | `docker compose ps --format '{{.Name}}'` 报 `parsing failed` | Compose 2.10.2 不支持 Go 模板格式化，去掉 `--format` 或用 `docker port` |

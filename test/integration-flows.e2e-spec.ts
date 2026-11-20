@@ -261,10 +261,13 @@ describe('跨模块核心业务数据流（integration）', () => {
   });
 
   it('边界：全失败批次以 partial 提交成功但零入库，strict 模式则整批拒绝（跨模块异常数据流）', async () => {
-    // engines 不满足默认 target：识别阶段通过、校验阶段 invalid，无任何可入库条目。
+    // 用「重复版本」制造真实结构 INVALID：先在库内同名同版本落一个包，导入同版本即
+    // PKG_VERSION_DUPLICATE。engines 不满足目标已降级为通用源提示，不再作为拦截手段。
     // 注意 BATCH_EMPTY 仅在批次条目数为 0 时抛（服务层防御），auto 识别阶段会拦截空文件，
     // 故端到端可达的是「有条目但全 invalid」——partial 跳过全部、strict 整批拒绝。
-    const bad = await makeNpmTarball('int-flow-empty', '1.0.0', { engines: { node: '>=99' } });
+    const name = 'int-flow-empty';
+    await publish(name, '1.0.0');
+    const bad = await makeNpmTarball(name, '1.0.0');
     const created = await request(ctx.baseUrl)
       .post('/api/v1/import-batches/auto')
       .auth(ADMIN.username, ADMIN.password)
@@ -287,18 +290,21 @@ describe('跨模块核心业务数据流（integration）', () => {
       .expect(201);
     expect(committed.body.data.stats).toMatchObject({ committed: 0 });
 
-    const packages = await request(ctx.baseUrl)
-      .get('/api/v1/packages')
-      .query({ q: 'int-flow-empty' })
+    // partial 未写入任何新版本：库内仍只有预置的那一个版本
+    const detail = await request(ctx.baseUrl)
+      .get('/api/v1/packages/detail')
+      .query({ ecosystem: 'npm', name })
       .auth(ADMIN.username, ADMIN.password)
       .expect(200);
-    expect(packages.body.data.total).toBe(0);
+    expect(detail.body.data.versions).toHaveLength(1);
 
     // 同一批若已 commit 则无法再验证 strict；另建批次验证 strict 整批拒绝
+    const name2 = 'int-flow-empty2';
+    await publish(name2, '1.0.0');
     const created2 = await request(ctx.baseUrl)
       .post('/api/v1/import-batches/auto')
       .auth(ADMIN.username, ADMIN.password)
-      .attach('files', await makeNpmTarball('int-flow-empty2', '1.0.0', { engines: { node: '>=99' } }), 'int-flow-empty2-1.0.0.tgz')
+      .attach('files', await makeNpmTarball(name2, '1.0.0'), 'int-flow-empty2-1.0.0.tgz')
       .expect(201);
     const batchId2 = created2.body.data.batchId as string;
     await request(ctx.baseUrl)

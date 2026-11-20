@@ -374,6 +374,181 @@
         esc(sec.getAttribute('data-manual-title') || '') + '</a>';
     });
     links.innerHTML = html;
+
+    // 编辑入口只给管理员；角色在运行中被改掉时顺手退出编辑态，避免普通用户看到源码框
+    var canEdit = isAdmin();
+    if (!canEdit && manualState.editMode) setManualEditMode(false);
+    ['manual-edit-toggle', 'manual-save', 'manual-defaults'].forEach(function (id) {
+      if ($(id)) $(id).classList.toggle('hidden', !canEdit);
+    });
+  }
+
+  // ---------- 用户手册：管理员编辑，所有登录用户共享 ----------
+
+  var manualState = {
+    defaults: {},
+    overrides: {},
+    editMode: false,
+    loaded: false,
+  };
+
+  /** 章节正文 = 除标题与编辑框之外的直接子节点 */
+  function manualBodyNodes(sec) {
+    return Array.prototype.filter.call(sec.children, function (child) {
+      return !child.classList.contains('card-head') && !child.classList.contains('manual-edit-area');
+    });
+  }
+
+  function manualBodyHtml(sec) {
+    return manualBodyNodes(sec)
+      .map(function (child) { return child.outerHTML; })
+      .join('');
+  }
+
+  /** 首屏先把内置静态章节存下来，作为「恢复默认」的基准 */
+  function captureManualDefaults() {
+    document.querySelectorAll('#view-manual .manual-sec').forEach(function (sec) {
+      manualState.defaults[sec.id] = manualBodyHtml(sec);
+    });
+  }
+
+  function effectiveManualHtml(id) {
+    var override = manualState.overrides[id];
+    if (override && typeof override.html === 'string') return override.html;
+    return manualState.defaults[id] || '';
+  }
+
+  /** 用服务端覆盖项替换章节正文；没有覆盖的章节继续用内置内容 */
+  function applyManualOverrides() {
+    document.querySelectorAll('#view-manual .manual-sec').forEach(function (sec) {
+      var editArea = null;
+      Array.prototype.forEach.call(sec.children, function (child) {
+        if (child.classList.contains('manual-edit-area')) editArea = child;
+      });
+      manualBodyNodes(sec).forEach(function (child) { child.remove(); });
+
+      var html = effectiveManualHtml(sec.id);
+      if (html) {
+        var box = document.createElement('div');
+        box.innerHTML = html;
+        while (box.firstChild) sec.appendChild(box.firstChild);
+      }
+      if (editArea) sec.appendChild(editArea);
+    });
+  }
+
+  function loadManualContent(options) {
+    var opts = options || {};
+    if (manualState.loaded && !opts.force) {
+      applyManualOverrides();
+      applyManualVisibility();
+      return;
+    }
+    return api('/api/v1/manual/content')
+      .then(function (data) {
+        manualState.overrides = (data && data.sections) || {};
+        manualState.loaded = true;
+        applyManualOverrides();
+        applyManualVisibility();
+      })
+      .catch(function (err) {
+        // 接口异常时继续展示内置手册，不让用户看到空白页
+        manualState.loaded = true;
+        applyManualOverrides();
+        applyManualVisibility();
+        reportError(err);
+      });
+  }
+
+  function setManualEditMode(on) {
+    manualState.editMode = Boolean(on);
+    var toggle = $('manual-edit-toggle');
+    if (toggle) toggle.textContent = manualState.editMode ? '退出编辑' : '编辑手册';
+    ['manual-save', 'manual-defaults'].forEach(function (id) {
+      if ($(id)) $(id).classList.toggle('hidden', !manualState.editMode);
+    });
+
+    document.querySelectorAll('#view-manual .manual-sec').forEach(function (sec) {
+      var area = null;
+      Array.prototype.forEach.call(sec.children, function (child) {
+        if (child.classList.contains('manual-edit-area')) area = child;
+      });
+      if (!area) {
+        area = document.createElement('div');
+        area.className = 'manual-edit-area';
+        var textarea = document.createElement('textarea');
+        textarea.setAttribute('data-manual-edit', sec.id);
+        textarea.setAttribute('aria-label', '编辑 ' + (sec.getAttribute('data-manual-title') || sec.id) + ' 内容');
+        area.appendChild(textarea);
+        sec.appendChild(area);
+      }
+      area.classList.toggle('hidden', !manualState.editMode);
+      if (manualState.editMode) {
+        var ta = area.querySelector('textarea');
+        ta.value = effectiveManualHtml(sec.id);
+        ta.classList.remove('manual-changed');
+      }
+    });
+  }
+
+  function manualChanges() {
+    var changes = {};
+    document.querySelectorAll('#view-manual textarea[data-manual-edit]').forEach(function (ta) {
+      var id = ta.getAttribute('data-manual-edit');
+      if (ta.value !== effectiveManualHtml(id)) changes[id] = ta.value;
+    });
+    return changes;
+  }
+
+  function saveManualContent() {
+    var changes = manualChanges();
+    if (!Object.keys(changes).length) {
+      showToast('没有需要保存的修改', 'info');
+      return;
+    }
+    setButtonLoading($('manual-save'), true);
+    api('/api/v1/manual/content', { method: 'PUT', body: { sections: changes } })
+      .then(function (data) {
+        manualState.overrides = (data && data.sections) || {};
+        applyManualOverrides();
+        applyManualVisibility();
+        // 重新写入 textarea，保证「已保存」后的基线就是当前内容
+        setManualEditMode(true);
+        showToast('用户手册已保存，所有登录用户可见', 'ok');
+      })
+      .catch(reportError)
+      .finally(function () {
+        setButtonLoading($('manual-save'), false);
+      });
+  }
+
+  function resetManualDefaults() {
+    var sections = {};
+    document.querySelectorAll('#view-manual textarea[data-manual-edit]').forEach(function (ta) {
+      sections[ta.getAttribute('data-manual-edit')] = '';
+    });
+    if (!Object.keys(sections).length) return;
+    confirmAction({
+      title: '恢复手册默认内容',
+      message: '将清除管理员对全部章节的修改，所有用户恢复内置用户手册。',
+      confirmText: '恢复默认',
+      tone: 'danger',
+    }).then(function (ok) {
+      if (!ok) return;
+      setButtonLoading($('manual-defaults'), true);
+      api('/api/v1/manual/content', { method: 'PUT', body: { sections: sections } })
+        .then(function (data) {
+          manualState.overrides = (data && data.sections) || {};
+          applyManualOverrides();
+          applyManualVisibility();
+          setManualEditMode(true);
+          showToast('已恢复内置手册', 'ok');
+        })
+        .catch(reportError)
+        .finally(function () {
+          setButtonLoading($('manual-defaults'), false);
+        });
+    });
   }
 
   /** 侧栏显隐统一入口：登录后、字典开关变化、定时刷新功能位都复用，避免三处逻辑漂移 */
@@ -660,7 +835,7 @@
     });
     $('view-title').textContent = VIEW_META[name][0];
     document.title = VIEW_META[name][0] + ' · 源鉴';
-    if (name === 'manual') applyManualVisibility();
+    if (name === 'manual') loadManualContent();
     if (name === 'packages') loadPackages();
     if (name === 'missing') loadMissing();
     if (name === 'security') loadSecurity();
@@ -686,6 +861,7 @@
     if (view === 'tokens') return loadTokens();
     if (view === 'users') return loadUsers();
     if (view === 'dictionary') return loadDictionary();
+    if (view === 'manual') return loadManualContent({ force: true });
     if (view === 'import') showToast('导入批次保存在当前页面状态中，刷新不会丢失进度', 'info');
   }
 
@@ -2897,6 +3073,9 @@
   }
 
   function bindEvents() {
+    // 先固定内置手册基准，后续的服务端覆盖与「恢复默认」都以此为参照
+    captureManualDefaults();
+
     // 挂载各视图分页组件：服务端分页的 onChange 重发请求，本地分页的 onChange 重切缓存
     pagers.pkg = Pagination.mount({ el: 'pkg-pager', view: 'packages', key: 'pkg', onChange: loadPackages });
     pagers.missing = Pagination.mount({ el: 'missing-pager', view: 'missing', key: 'mis', onChange: loadMissing });
@@ -3196,6 +3375,18 @@
     });
     $('scan-modal').addEventListener('click', function (e) {
       if (e.target === $('scan-modal')) $('scan-modal').classList.add('hidden');
+    });
+
+    // 用户手册编辑：入口与保存按钮由 applyManualVisibility 按角色显隐
+    $('manual-edit-toggle').addEventListener('click', function () {
+      setManualEditMode(!manualState.editMode);
+    });
+    $('manual-save').addEventListener('click', saveManualContent);
+    $('manual-defaults').addEventListener('click', resetManualDefaults);
+    document.addEventListener('input', function (e) {
+      if (!e.target || !e.target.matches || !e.target.matches('textarea[data-manual-edit]')) return;
+      var id = e.target.getAttribute('data-manual-edit');
+      e.target.classList.toggle('manual-changed', e.target.value !== effectiveManualHtml(id));
     });
 
     // 确认弹窗：取消默认聚焦，降低回车误触危险操作的概率

@@ -1,5 +1,5 @@
 # 源鉴 · 三角色拆分 + HTTP 直连部署（arm64 / aarch64）
-# 默认形态：console/npm/pypi 三个容器各自映射宿主端口 3000/3001/3002，客户端直连。
+# 默认形态：console/npm/pypi 三个容器各自映射宿主端口 8860/8861/8862，客户端直连。
 # Nginx 网关配置已预留但不启用；需要时执行 `docker compose --profile gateway up -d`。
 #
 # 用法（在本文件所在目录执行）：
@@ -45,7 +45,7 @@ services:
       PORT: "3000"
       BIND_HOST: 0.0.0.0
     ports:
-      - "3000:3000"
+      - "8860:3000"
 
   npm:
     <<: *app-common
@@ -55,7 +55,7 @@ services:
       PORT: "3000"
       BIND_HOST: 0.0.0.0
     ports:
-      - "3001:3000"
+      - "8861:3000"
     depends_on:
       console:
         condition: service_healthy
@@ -68,14 +68,14 @@ services:
       PORT: "3000"
       BIND_HOST: 0.0.0.0
     ports:
-      - "3002:3000"
+      - "8862:3000"
     depends_on:
       console:
         condition: service_healthy
 
   # 预留网关：默认不启动。启用后由它统一终止 TLS 并按 /npm/ /pypi/ 分流。
   # 启用前需准备证书到 deploy/certs/，并把 deploy/.env.production 的三个基址改为网关 https 地址、
-  # 移除 ALLOW_INSECURE_BASE_URL=true；同时按手册关闭宿主 3000/3001/3002 的对外暴露。
+  # 移除 ALLOW_INSECURE_BASE_URL=true；同时按手册关闭宿主 8860/8861/8862 的对外暴露。
   nginx:
     image: nginx:1.27-alpine
     platform: linux/arm64

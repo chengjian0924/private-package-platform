@@ -36,7 +36,6 @@ export interface NpmValidateInput {
   declaredSha256?: string;
   existsInRegistry: boolean;
   targets: RuntimeTargets;
-  resolveVersions: (name: string) => string[];
 }
 
 export interface PypiValidateInput {
@@ -174,36 +173,6 @@ export async function readNpmPackageManifest(buffer: Buffer): Promise<NpmManifes
   return JSON.parse(holder.data.toString('utf8')) as NpmManifest;
 }
 
-function checkDependencies(
-  deps: Record<string, string> | undefined,
-  resolveVersions: (name: string) => string[],
-  issues: CheckIssue[],
-  depKind: string,
-): void {
-  if (!deps) return;
-  for (const [depName, range] of Object.entries(deps)) {
-    const normalized = normalizeName('npm', depName);
-    if (!normalized) continue;
-    const available = resolveVersions(normalized);
-    if (available.length === 0) {
-      issues.push({
-        code: 'PKG_DEP_UNRESOLVED',
-        severity: 'warning',
-        message: `${depKind}依赖 ${depName}@${range} 暂不在私有源中，已登记为缺失依赖`,
-      });
-      continue;
-    }
-    const satisfied = semver.maxSatisfying(available, range);
-    if (!satisfied) {
-      issues.push({
-        code: 'PKG_DEP_INCOMPATIBLE',
-        severity: 'error',
-        message: `${depKind}依赖 ${depName}@${range} 与已入库版本 ${available.join(', ')} 均不兼容`,
-      });
-    }
-  }
-}
-
 export async function validateNpmPackage(input: NpmValidateInput): Promise<ValidationOutcome> {
   const issues: CheckIssue[] = [];
   const digests = digestOf(input.buffer);
@@ -252,12 +221,19 @@ export async function validateNpmPackage(input: NpmValidateInput): Promise<Valid
     issues.push({ code: 'PKG_VERSION_DUPLICATE', severity: 'error', message: '该版本已存在于私有源' });
   }
 
-  // S4 跨包依赖兼容性
-  checkDependencies(manifest.dependencies, input.resolveVersions, issues, '运行时');
-  checkDependencies(manifest.optionalDependencies, input.resolveVersions, issues, '可选');
-  checkDependencies(manifest.peerDependencies, input.resolveVersions, issues, '对等');
+  // S4 跨包依赖兼容性：刻意不做判定。
+  // 私有源只负责存储，依赖声明按白名单原样透传到 packument，由下游 npm/pip 客户端
+  // 在安装时按自身需求解析版本。入库时拿「当前已入库的版本集合」去比对依赖区间，
+  // 会把「依赖包还没导全」误判成消费方不兼容，并导致该包在 partial 提交时被跳过。
+  // 缺失依赖以真实 404 请求为准（MissingService.reportRegistryMiss），不由导入侧推测。
 
-  // S5 运行时版本校验（C2：必须校验）
+  // S5 运行时兼容性「提示」：通用源不做版本准入拦截（与 PyPI 侧设计一致）。
+  //
+  // 设计依据：本平台是通用 npm 仓库，必须同时容纳面向不同 Node 版本 / OS / CPU 的包。
+  // engines.node / os / cpu 是给「客户端」npm 在安装时按自身环境判断用的元数据，不是
+  // 仓库端的准入条件。若用单一 DEFAULT_NODE_TARGET 精确匹配并拒绝不匹配包，下游既无法
+  // 自行选择版本，也会让面向其他运行时的包进不了库。故一律降级为 warning：完整保留
+  // 信息，由 npm 在拉取端决策，仓库只保证包本身完整、标识一致、版本合法、无重复。
   const engines = manifest.engines || {};
   const nodeRange = engines.node;
   if (!nodeRange) {
@@ -265,23 +241,23 @@ export async function validateNpmPackage(input: NpmValidateInput): Promise<Valid
   } else if (input.targets.node && !semver.satisfies(input.targets.node, nodeRange, { includePrerelease: true })) {
     issues.push({
       code: 'PKG_RUNTIME_INCOMPATIBLE',
-      severity: 'error',
-      message: `engines.node=${nodeRange} 不满足目标 Node ${input.targets.node}`,
+      severity: 'warning',
+      message: `engines.node=${nodeRange} 与默认目标 Node ${input.targets.node} 不一致；已收录，npm 将按客户端环境判断`,
     });
   }
 
   if (manifest.os?.length && input.targets.os && !manifest.os.includes(input.targets.os)) {
     issues.push({
       code: 'PKG_RUNTIME_INCOMPATIBLE',
-      severity: 'error',
-      message: `包限定 os=${manifest.os.join(',')}，与目标 ${input.targets.os} 不符`,
+      severity: 'warning',
+      message: `包限定 os=${manifest.os.join(',')}，与目标 ${input.targets.os} 不一致；已收录，npm 将按客户端环境判断`,
     });
   }
   if (manifest.cpu?.length && input.targets.arch && !manifest.cpu.includes(input.targets.arch)) {
     issues.push({
       code: 'PKG_RUNTIME_INCOMPATIBLE',
-      severity: 'error',
-      message: `包限定 cpu=${manifest.cpu.join(',')}，与目标 ${input.targets.arch} 不符`,
+      severity: 'warning',
+      message: `包限定 cpu=${manifest.cpu.join(',')}，与目标 ${input.targets.arch} 不一致；已收录，npm 将按客户端环境判断`,
     });
   }
 
