@@ -5,6 +5,7 @@ import { ApiError } from '../common/errors';
 import { nowIso } from '../common/http.util';
 import { DatabaseService, isUniqueViolation } from '../db/database.service';
 import { isValidName, normalizeName, type Ecosystem } from './names';
+import { fallbackPypiVersionKey, pep440VersionKey } from './pep440';
 import { pickNpmMetadata } from './npm-metadata';
 import { SecurityService, type GateResult } from '../security/security.service';
 import { StorageService } from '../storage/storage.service';
@@ -71,7 +72,10 @@ export function normalizeVersion(ecosystem: Ecosystem, version: string): string 
     const valid = semver.valid(version);
     return valid ?? version.trim();
   }
-  return version.trim().toLowerCase().replace(/^v/, '');
+  // PyPI 按 PEP 440 相等语义归一：1 / 1.0 / 1.0.0 / v1.0 落到同一个键，
+  // 由 UNIQUE(package_id, normalized_version) 保证同一个包版本只允许存在一个。
+  // 非法版本回退到历史口径，真正的拦截交给校验层的 PKG_VERSION_INVALID。
+  return pep440VersionKey(version) ?? fallbackPypiVersionKey(version);
 }
 
 @Injectable()

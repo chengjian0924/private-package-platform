@@ -45,7 +45,7 @@ pip install --index-url http://<host>:3000/pypi/simple/ --trusted-host <host> <p
 twine upload --repository-url http://<host>:3000/pypi/ dist/*
 ```
 
-支持 wheel 与 sdist；上传时校验文件名与版本号合法性、重复版本、运行时标签（声明 `requires_python` 时）。
+支持 wheel 与 sdist；上传时校验文件名与版本号合法性、重复版本、运行时标签（声明 `requires_python` 时）。版本号按 PEP 440 相等语义归一，`1.0` 与 `v1.0` / `1.0.0` 视为同一版本，重复上传会被拒绝。
 
 ## 4. 批量导入（管理员）
 
@@ -103,8 +103,8 @@ requirements `.txt`：仅支持 `name==version` 精确固定版本，可选 `--h
    - `strict`：存在任一失败项则整批拒绝，返回 `BATCH_HAS_BLOCKING_ITEMS`。
 2. 点击「开始全量校验」，逐条展示校验结果与失败原因：
    - S1 文件完整性：文件存在、SHA256 匹配、压缩包可读；
-   - S2 版本号合法性：npm 遵循 semver，PyPI 遵循 PEP 440；
-   - S3 重复版本：同一包同一版本不可重复入库；
+   - S2 版本号合法性：npm 遵循 semver，PyPI 遵循 PEP 440（含 `v` 前缀、epoch、pre/post/dev 别名等完整写法）；
+   - S3 重复版本：同一包同一版本不可重复入库。PyPI 按 PEP 440 **相等语义**判重，`1` / `1.0` / `1.0.0` / `v1.0` 视为同一个版本，只保留最早入库的一个；文件名与清单版本只需语义等价即可，不要求字符串完全相同；
    - S4 依赖声明：**不做跨包兼容性判定**，依赖字段按白名单原样透传到 packument。私有源只负责存储，由下游 `npm` / `pip` 客户端在安装时按自身需求解析版本；入库时若拿「当前已入库版本集合」去比对依赖区间，会把「依赖包还没导全」误判成消费方不兼容并跳过入库；
    - S5 运行时版本：npm / PyPI 均为**通用仓库**，面向任意运行时版本的包均可入库。npm 的 `engines.node` / `os` / `cpu` 与 PyPI 的 `requires_python` / wheel 标签（python/abi/platform）都只作为元数据记录并给出提示告警，**不阻断入库**；由 `npm` / `pip` 在拉取时按客户端环境自行挑选兼容包。
 3. 查看无误后点击「确认入库」，成功后提示入库数量，可在「包管理」中检索到新包。

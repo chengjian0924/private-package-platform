@@ -5,6 +5,7 @@ import { digestOf } from '../common/http.util';
 import { isNpmManifestPath, pickNpmMetadata } from './npm-metadata';
 import type { Ecosystem } from './packages.service';
 import { isValidName, normalizeName } from './packages.service';
+import { isValidPep440Version, pep440VersionKey } from './pep440';
 
 export interface RuntimeTargets {
   node?: string;
@@ -119,10 +120,8 @@ export function satisfiesPython(requires: string | undefined, target: string | u
   return true;
 }
 
-const PEP440 = /^\d+(\.\d+)*((a|b|rc)\d+)?(\.post\d+)?(\.dev\d+)?(\+[0-9a-z.]+)?$/i;
-
 export function isValidPypiVersion(version: string): boolean {
-  return PEP440.test(version.trim());
+  return isValidPep440Version(version);
 }
 
 // ---------- npm tarball ----------
@@ -404,7 +403,12 @@ export function validatePypiPackage(input: PypiValidateInput): ValidationOutcome
       message: `文件名中的包名 ${parsed.name} 与清单 ${input.name} 不一致`,
     });
   }
-  if (parsed.version !== input.version) {
+  // 按 PEP 440 相等语义比较：wheel 文件名里的 1.0.0 与清单里的 v1.0 / 1.0
+  // 是同一个版本，不应误判为不一致；真正不同（1.0 vs 2.0）仍照常拦截。
+  // 文件名版本合法性由上层 isValidPypiVersion 对清单版本把关，这里只比相等性。
+  const parsedVersionKey = pep440VersionKey(parsed.version);
+  const declaredVersionKey = pep440VersionKey(input.version);
+  if (parsedVersionKey === null || declaredVersionKey === null || parsedVersionKey !== declaredVersionKey) {
     issues.push({
       code: 'PKG_METADATA_MISMATCH',
       severity: 'error',

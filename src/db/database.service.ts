@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/commo
 import * as fs from 'node:fs';
 import { DatabaseSync, StatementSync } from 'node:sqlite';
 import { getConfig } from '../config/config';
+import { fallbackPypiVersionKey, pep440VersionKey } from '../packages/pep440';
 
 export type DbRow = Record<string, unknown>;
 
@@ -383,11 +384,80 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
     // 令牌吊销原因：区分手动吊销/批量清理/账号删除，便于审计回溯（存量记录为 NULL，视为手动）
     this.ensureColumn('api_tokens', 'revoke_reason', 'TEXT');
 
+    // PyPI 版本键改为 PEP 440 相等语义：存量 1.0 / 1.0.0 需在启动时收敛，
+    // 否则 findVersion('1.0') 查不到旧库的 1.0.0，出现「同一个包装两次」。
+    this.migratePep440VersionKeys();
+
     // 依赖后补列的索引必须建在 migrate 之后：
     // SCHEMA 先于 migrate 执行，存量库此时还没有 source 列，建索引会直接抛「no such column」导致启动失败
     this.db.exec(
       'CREATE INDEX IF NOT EXISTS idx_missing_source ON missing_dependencies(source, last_seen_at)',
     );
+  }
+
+  /**
+   * PyPI 版本键迁移：把存量 normalized_version 按 PEP 440 相等语义重算。
+   * - 幂等：迁移后各键已是规范形式，再次执行不产生变更。
+   * - 冲突（旧库同时存在 1.0 与 1.0.0）：保留创建最早的一条，其余软删除；
+   *   不物理删除对象与记录，管理员仍可在管理端恢复/清理，避免不可逆数据丢失。
+   * - 三角色进程可能并发启动，整体放在 BEGIN IMMEDIATE 事务内串行执行。
+   */
+  private migratePep440VersionKeys(): void {
+    const rows = this.all<{
+      id: string;
+      package_id: string;
+      version: string;
+      normalized_version: string;
+      created_at: string;
+    }>(
+      `SELECT v.id, v.package_id, v.version, v.normalized_version, v.created_at
+       FROM package_versions v
+       JOIN packages p ON p.id = v.package_id
+       WHERE p.ecosystem = 'pypi' AND v.deleted_at IS NULL
+       ORDER BY v.package_id ASC, v.created_at ASC, v.id ASC`,
+    );
+    if (rows.length === 0) return;
+
+    const changed: { id: string; key: string }[] = [];
+    const conflicts: string[] = [];
+    const occupied = new Map<string, string>();
+
+    for (const row of rows) {
+      const key = pep440VersionKey(row.version) ?? fallbackPypiVersionKey(row.version);
+      const mark = `${row.package_id}\u0000${key}`;
+      const holder = occupied.get(mark);
+      if (holder && holder !== row.id) {
+        // 同一包下多个版本归一到同一键：按创建顺序保留最早，其余软删除
+        conflicts.push(row.id);
+        continue;
+      }
+      occupied.set(mark, row.id);
+      if (key !== row.normalized_version) changed.push({ id: row.id, key });
+    }
+
+    if (changed.length === 0 && conflicts.length === 0) return;
+
+    this.tx(() => {
+      const deletedAt = new Date().toISOString();
+      for (const item of changed) {
+        this.run('UPDATE package_versions SET normalized_version = ? WHERE id = ?', item.key, item.id);
+      }
+      for (const id of conflicts) {
+        this.run(
+          "UPDATE package_versions SET status = 'deleted', deleted_at = ? WHERE id = ? AND deleted_at IS NULL",
+          deletedAt,
+          id,
+        );
+      }
+    });
+
+    if (conflicts.length > 0) {
+      this.logger.warn(
+        `PyPI 版本键迁移：${changed.length} 条已归一，${conflicts.length} 条等价重复版本已软删除（均早于本次修复入库，可在管理端查看/恢复）`,
+      );
+    } else {
+      this.logger.log(`PyPI 版本键迁移：${changed.length} 条已按 PEP 440 归一`);
+    }
   }
 
   private ensureColumn(table: string, column: string, ddl: string): void {
