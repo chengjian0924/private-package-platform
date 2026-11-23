@@ -97,7 +97,7 @@ npm run start:test# 测试环境：http://localhost:3100，数据目录 data/tes
 | --- | --- | --- | --- |
 | `NODE_ENV` | `development` | `test` | 运行环境标识 |
 | `PORT` | `3000` | `3100` | 监听端口 |
-| `DEPLOY_MODE` | `direct` | 同左 | 部署形态：`direct`（默认，端口直连）或 `gateway`（统一网关）。**只有** gateway 形态护栏才强制 `BIND_HOST=127.0.0.1`，直连形态保持 `0.0.0.0` 不会被拒绝启动 |
+| `DEPLOY_MODE` | `direct` | 同左 | 部署形态：`direct`（默认，端口直连）或 `gateway`（统一网关）。**只有** gateway 形态护栏才强制 `BIND_HOST=127.0.0.1`，直连形态保持 `0.0.0.0` 不会被拒绝启动。该值同时决定限流/审计/日志的来源 IP 口径：direct 忽略 `X-Forwarded-For` 只取 TCP 对端（客户端伪造头无效）；gateway 只取网关注入的 XFF 最后一跳，忽略可伪造的前缀 |
 | `BIND_HOST` | `0.0.0.0` | 同左 | 监听地址；direct 形态保持 `0.0.0.0`（Docker 的 8860/8861/8862 → 3000 映射依赖），gateway 形态必须 `127.0.0.1`，IPv6-only 内网设 `::` |
 | `DATA_DIR` | `./data/dev` | `./data/test` | SQLite 与包文件根目录 |
 | `DICTIONARY_SYNC_INTERVAL_MS` | `1000` | `1000` | 字典覆盖层跨进程回读间隔（毫秒，0–60000，0 表示每次读取都回读）；三角色共享同一库，字典保存后其他进程在该间隔内自动同步，无需重启 |

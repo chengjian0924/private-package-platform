@@ -4,6 +4,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { NextFunction, Request, Response } from 'express';
 import { getConfig } from '../config/config';
+import { clientIp } from './http.util';
 
 /**
  * 结构化日志（B2）：单行 JSON 写 stdout，由 filebeat/fluent-bit 等采集。
@@ -200,7 +201,7 @@ export function requestLog(req: TracedRequest, res: Response, next: NextFunction
       path: req.path,
       status,
       durationMs: Math.round(durationMs * 100) / 100,
-      ip: req.ip,
+      ip: clientIp(req),
       bytes: Number(res.getHeader('content-length') || 0),
     }, traceId);
   });

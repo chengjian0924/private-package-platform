@@ -1,5 +1,6 @@
 import type { NextFunction, Request, Response } from 'express';
 import { getConfig } from '../config/config';
+import { clientIp } from './http.util';
 
 /**
  * HTTP 安全基线：安全响应头 + 进程内限流（B4）。
@@ -134,8 +135,9 @@ export function rateLimit(req: Request, res: Response, next: NextFunction): void
         : scope === 'read'
           ? cfg.readMax
           : cfg.registryMax;
-  // npm/pypi 各自独立计数，避免一侧的批量拉取把另一侧的客户端饿死
-  const key = `${scope}:${req.ip || 'unknown'}`;
+  // npm/pypi 各自独立计数，避免一侧的批量拉取把另一侧的客户端饿死。
+  // 来源 IP 与审计/访问日志共用 clientIp()，确保网关形态按真实客户端分桶、直连形态忽略伪造 XFF。
+  const key = `${scope}:${clientIp(req) || 'unknown'}`;
   const result = checkRateLimit(key, limit, cfg.windowMs);
 
   if (!result.allowed) {

@@ -66,4 +66,16 @@ describe('registry 独立限流（e2e）', () => {
     // registry 请求不会清空/补充 read 桶：控制台依旧被限
     await request(ctx.baseUrl).get('/api/v1/health').expect(429);
   });
+
+  it('direct 形态忽略伪造 X-Forwarded-For，所有客户端仍按真实对端共用同一限流桶', async () => {
+    resetRateLimitState(); // 上一条用例已打满 npm 桶，这里用干净窗口
+    const forged = (ip: string) => request(ctx.baseUrl).get('/npm/-/ping').set('X-Forwarded-For', ip);
+
+    // 三个不同的伪造来源 IP，在 direct 形态下应落到同一个桶（真实对端 127.0.0.1）：
+    // 前 2 次放行（registryMax=2），第 3 次无论换成哪个伪造 IP 都被拒。
+    await forged('203.0.113.1').expect(200);
+    await forged('198.51.100.2').expect(200);
+    const blocked = await forged('192.0.2.3').expect(429);
+    expect(blocked.body.code).toBe('SYS_RATE_LIMITED');
+  });
 });
