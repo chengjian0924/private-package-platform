@@ -24,6 +24,8 @@ const MANAGED = [
   'ALLOW_INSECURE_BASE_URL',
   'DATA_DIR',
   'BIND_HOST',
+  'DEPLOY_MODE',
+  'METRICS_TOKEN',
   'BOOTSTRAP_ADMIN_USERNAME',
   'INITIAL_PASSWORD_ADMIN',
   'INITIAL_PASSWORD_USER',
@@ -42,6 +44,7 @@ describe('A1 生产配置护栏', () => {
       NODE_ENV: 'production',
       PUBLIC_BASE_URL: 'https://yuanjian.corp.internal',
       ALLOW_INSECURE_BASE_URL: 'false',
+      DEPLOY_MODE: 'direct',
       DATA_DIR,
       BOOTSTRAP_ADMIN_USERNAME: 'admin',
     });
@@ -176,5 +179,29 @@ describe('A1 生产配置护栏', () => {
     process.env.BIND_HOST = '   ';
     resetConfigCache();
     expect(getConfig().bindHost).toBe('0.0.0.0');
+  });
+
+  it('冲突3：direct 形态允许 0.0.0.0，gateway 形态强制回环监听', () => {
+    // 当前生产形态：http 明文直连 + 宿主端口映射（8860/8861/8862 → 3000）。
+    // 默认 direct 不能因为 BIND_HOST 拒绝启动，否则端口映射全部失效、服务不可达。
+    process.env.DEPLOY_MODE = 'direct';
+    process.env.BIND_HOST = '0.0.0.0';
+    resetConfigCache();
+    expect(productionConfigProblems(getConfig())).toEqual([]);
+
+    // 切到网关形态后仍监听全网卡，后端端口可绕过网关 TLS/ACL，必须拦下
+    process.env.DEPLOY_MODE = 'gateway';
+    resetConfigCache();
+    expect(productionConfigProblems(getConfig()).join('\n')).toContain('BIND_HOST');
+
+    process.env.BIND_HOST = '127.0.0.1';
+    resetConfigCache();
+    expect(productionConfigProblems(getConfig())).toEqual([]);
+  });
+
+  it('DEPLOY_MODE 取值非法时 fail-fast，不静默退化为直连', () => {
+    process.env.DEPLOY_MODE = 'gatewat';
+    resetConfigCache();
+    expect(() => getConfig()).toThrow('DEPLOY_MODE');
   });
 });

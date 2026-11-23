@@ -315,10 +315,12 @@ export class ImportService {
         continue;
       }
       if (targetIssues.length > 0) {
+        // 仓库端按通用源策略入库：运行时目标只用于兼容性提示，不参与准入判定。
+        // 与 PKG_RUNTIME_INCOMPATIBLE 保持同一口径——记 code 告警，条目仍可 VALID/入库。
         issues.push({
           code: 'TARGET_UNDECLARED',
-          severity: 'error',
-          message: `批次缺少运行时目标声明：${targetIssues.join(', ')}`,
+          severity: 'warning',
+          message: `批次未声明运行时目标（${targetIssues.join(', ')}），已跳过兼容性提示，不影响入库`,
         });
       }
 

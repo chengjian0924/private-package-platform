@@ -27,7 +27,7 @@ async function bootstrap(): Promise<void> {
     logger,
   });
   configureApp(app);
-  // A4：BIND_HOST 收敛监听地址，走 Nginx 网关的生产环境设 127.0.0.1
+  // direct 形态监听全网卡以承接 Docker 端口映射；gateway 形态由护栏强制收敛到 127.0.0.1
   await app.listen(cfg.port, cfg.bindHost);
 
   // 建号只由控制台进程负责：registry 进程并发建号会撞唯一约束，且 npm/pypi 本就不提供登录入口
@@ -50,6 +50,13 @@ async function bootstrap(): Promise<void> {
   if (cfg.envName === 'production' && cfg.allowInsecureBaseUrl) {
     logger.warn(
       '已启用 ALLOW_INSECURE_BASE_URL：对外地址为明文 HTTP，登录态与令牌在内网可被嗅探，请确保已做网络隔离并纳入风险清单',
+      'Bootstrap',
+    );
+  }
+  // 只告警不拒绝启动：老部署缺该配置时 /metrics 仍能工作，不能因为补安全项把线上打挂
+  if (cfg.envName === 'production' && !cfg.metrics.token) {
+    logger.warn(
+      'METRICS_TOKEN 未设置：/metrics 当前无需认证即可抓取，生产环境请设置并通过网络 ACL 限制来源',
       'Bootstrap',
     );
   }

@@ -40,6 +40,9 @@ async function decodeBase64ToFile(encoded: string, destPath: string): Promise<vo
 
 /** 查询参数整数化并钳制到 [min,max]；非法/缺省回退默认值 */
 function clampInt(raw: unknown, fallback: number, min: number, max: number): number {
+  // 空串（?size=）经 Number('') 会得到 0，被钳到 min=1，导致 dshmarket 每页只拿到 1 条；
+  // 空值本质是"未传参"，必须回退默认值而不是钳到下限。
+  if (raw === '' || raw === null || raw === undefined) return fallback;
   const n = Number(raw);
   if (!Number.isFinite(n)) return fallback;
   return Math.min(max, Math.max(min, Math.trunc(n)));

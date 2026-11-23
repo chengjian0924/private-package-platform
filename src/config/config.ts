@@ -16,7 +16,15 @@ export interface TrustedKey {
  */
 export type ProcessRole = 'all' | 'console' | 'npm' | 'pypi';
 
+/**
+ * 部署形态：direct=对外基址直连各角色端口（Docker 宿主端口映射依赖 0.0.0.0）；
+ * gateway=统一走 Nginx，应用只监听回环地址，禁止绕过网关。
+ * 默认 direct，保证现有 http 明文直连部署零改动即可启动。
+ */
+export type DeployMode = 'direct' | 'gateway';
+
 const PROCESS_ROLES: ProcessRole[] = ['all', 'console', 'npm', 'pypi'];
+const DEPLOY_MODES: DeployMode[] = ['direct', 'gateway'];
 
 /** SNTP 时钟源：审计时间与 Token 过期判断的可信基准 */
 export interface ClockConfig {
@@ -81,8 +89,10 @@ export interface AppConfig {
   /** 进程角色：决定了加载哪些路由模块，以及默认监听端口 */
   role: ProcessRole;
   port: number;
-  /** 监听地址：默认 0.0.0.0；生产走 Nginx 网关时应设 127.0.0.1，杜绝绕过网关直连（A4） */
+  /** 监听地址：direct 形态保持 0.0.0.0（Docker 端口映射需要）；gateway 形态必须为 127.0.0.1 */
   bindHost: string;
+  /** 部署形态：direct（默认，直连端口）或 gateway（统一网关） */
+  deployMode: DeployMode;
   dataDir: string;
   dbPath: string;
   objectDir: string;
@@ -170,6 +180,8 @@ export interface AppConfig {
     authMax: number;
     writeMax: number;
     readMax: number;
+    /** registry 协议读请求独立配额（/npm/*、/pypi/*），不占用 readMax */
+    registryMax: number;
   };
   /** 磁盘水位保护：百分比与最小剩余空间双阈值，任一触发即降级 */
   storage: {
@@ -271,6 +283,11 @@ function buildConfig(): void {
   const role = PROCESS_ROLES.includes(roleRaw as ProcessRole) ? (roleRaw as ProcessRole) : null;
   if (!role) {
     throw new Error(`环境变量 PROCESS_ROLE 取值非法: ${roleRaw}，可选 ${PROCESS_ROLES.join('/')}`);
+  }
+  const deployModeRaw = (process.env.DEPLOY_MODE || 'direct').trim().toLowerCase();
+  const deployMode = DEPLOY_MODES.includes(deployModeRaw as DeployMode) ? (deployModeRaw as DeployMode) : null;
+  if (!deployMode) {
+    throw new Error(`环境变量 DEPLOY_MODE 取值非法: ${deployModeRaw}，可选 ${DEPLOY_MODES.join('/')}`);
   }
   const dataDir = path.resolve(process.cwd(), process.env.DATA_DIR || './data/dev');
   const mode = (process.env.BATCH_DEFAULT_MODE || 'partial').toLowerCase();
@@ -383,8 +400,9 @@ function buildConfig(): void {
   cached = {
     envName,
     role,
+    deployMode,
     port: intEnv('PORT', defaultPort(envName, role)),
-    // A4：默认保持全网卡监听兼容直连部署；配 Nginx 时由 .env 设 BIND_HOST=127.0.0.1
+    // direct 形态保持全网卡监听（Docker 端口映射依赖）；gateway 形态由护栏强制收敛到回环
     bindHost: (process.env.BIND_HOST || '').trim() || '0.0.0.0',
     dataDir,
     dbPath: path.join(dataDir, 'platform.db'),
@@ -460,6 +478,9 @@ function buildConfig(): void {
       authMax: intEnv('RATE_LIMIT_AUTH_MAX', 10),
       writeMax: intEnv('RATE_LIMIT_WRITE_MAX', 60),
       readMax: intEnv('RATE_LIMIT_READ_MAX', 600),
+      // dshmarket/pip/npm 会按依赖逐个拉 simple/packument/tarball，默认给高配额；
+      // 与控制台 API 的 readMax 分桶，避免批量安装把自己的额度打满后误判“不是 registry”
+      registryMax: intEnv('RATE_LIMIT_REGISTRY_MAX', 20_000),
     },
     storage: {
       diskAlertPercent,
@@ -558,6 +579,14 @@ export function productionConfigProblems(cfg: AppConfig): string[] {
         `${label} 必须为 https://（当前 ${base}）；确需直连 HTTP 请显式设置 ALLOW_INSECURE_BASE_URL=true`,
       );
     }
+  }
+
+  // 网关形态下应用只应监听回环：0.0.0.0 会让后端端口绕过网关 TLS/ACL 直接暴露。
+  // direct 形态（默认）必须允许 0.0.0.0：Docker 的 8860/8861/8862 → 3000 端口映射依赖它。
+  if (cfg.deployMode === 'gateway' && cfg.bindHost === '0.0.0.0') {
+    problems.push(
+      `DEPLOY_MODE=gateway 时 BIND_HOST 必须为 127.0.0.1（当前 ${cfg.bindHost}），否则后端端口可绕过网关直连`,
+    );
   }
 
   const version = nodeVersion();

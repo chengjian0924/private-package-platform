@@ -17,6 +17,7 @@ export interface DictionaryOverrides {
   'rateLimit.authMax'?: number;
   'rateLimit.writeMax'?: number;
   'rateLimit.readMax'?: number;
+  'rateLimit.registryMax'?: number;
   'security.scanEnabled'?: boolean;
   'security.requireSignature'?: boolean;
   'security.requireAdvisoryDb'?: boolean;
@@ -29,7 +30,7 @@ export interface DictionaryOverrides {
   'limits.maxPypiUploadBytes'?: number;
 }
 
-const RATE_LIMIT_KEYS = ['enabled', 'windowMs', 'authMax', 'writeMax', 'readMax'] as const;
+const RATE_LIMIT_KEYS = ['enabled', 'windowMs', 'authMax', 'writeMax', 'readMax', 'registryMax'] as const;
 const SECURITY_KEYS = ['scanEnabled', 'requireSignature', 'requireAdvisoryDb'] as const;
 const RETENTION_KEYS = ['deletedPackageDays', 'logDays'] as const;
 /** 备份目录（backup.dir）刻意不在字典里：它决定数据落哪块盘，属于部署参数而非运行时开关 */

@@ -1,4 +1,5 @@
-import { checkRateLimit, resetRateLimitState } from '../../src/common/http-security';
+import type { Request } from 'express';
+import { checkRateLimit, rateLimitScopeOf, resetRateLimitState } from '../../src/common/http-security';
 import { evaluateDiskState } from '../../src/common/disk-guard.service';
 
 /** 固定窗口限流：放行/拒绝边界、窗口重置、retryAfter、禁用分支 */
@@ -67,6 +68,30 @@ describe('接口限流（单元）', () => {
     const t = 3_000_000;
     expect(checkRateLimit('', 1, 1_000, t).allowed).toBe(true);
     expect(checkRateLimit('', 1, 1_000, t).allowed).toBe(false);
+  });
+});
+
+/** registry 读请求必须分桶，否则 dshmarket/pip 的批量 GET 会打满控制台读配额 */
+describe('限流类别判定（单元）', () => {
+  const req = (path: string, method = 'GET') =>
+    ({ path, method }) as unknown as Request;
+
+  it('npm/pypi 协议 GET/HEAD 走各自独立桶', () => {
+    expect(rateLimitScopeOf(req('/npm/-/v1/search'))).toBe('npm');
+    expect(rateLimitScopeOf(req('/npm/@types/node', 'HEAD'))).toBe('npm');
+    expect(rateLimitScopeOf(req('/pypi/simple/requests/'))).toBe('pypi');
+    expect(rateLimitScopeOf(req('/PYPI/packages/foo.whl'))).toBe('pypi');
+  });
+
+  it('控制台读请求仍走 read 桶，写请求仍走 write 桶', () => {
+    expect(rateLimitScopeOf(req('/api/v1/packages'))).toBe('read');
+    expect(rateLimitScopeOf(req('/api/v1/health'))).toBe('read');
+    expect(rateLimitScopeOf(req('/npm/pkg', 'PUT'))).toBe('write');
+    expect(rateLimitScopeOf(req('/pypi/legacy/', 'POST'))).toBe('write');
+  });
+
+  it('认证入口优先级高于协议前缀', () => {
+    expect(rateLimitScopeOf(req('/api/v1/auth/login', 'POST'))).toBe('auth');
   });
 });
 

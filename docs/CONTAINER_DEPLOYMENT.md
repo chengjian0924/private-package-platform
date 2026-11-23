@@ -280,7 +280,8 @@ docker run --rm \
 | --- | --- | --- |
 | 配置位置 | `/opt/yuanjian/.env.production` | `deploy/.env.production` |
 | 初始密码变量 | 沿用既有 `.env.production` 配置 | `INITIAL_PASSWORD_ADMIN` / `INITIAL_PASSWORD_USER` |
-| `BIND_HOST` | 网关形态 `127.0.0.1` | `0.0.0.0`（隔离由容器网络负责） |
+| `DEPLOY_MODE` | `gateway`（护栏强制回环监听） | `direct`（默认，端口直连） |
+| `BIND_HOST` | 网关形态 `127.0.0.1` | `0.0.0.0`（Docker 端口映射依赖，隔离由容器网络负责） |
 | 端口 | 按角色默认 3000/3001/3002 | 容器内统一 3000，宿主映射 8860/8861/8862 |
 | 日志 | journald | `docker logs` / 日志驱动采集 stdout |
 | 自愈 | `Restart=always` | `restart: unless-stopped` |

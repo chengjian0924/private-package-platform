@@ -57,7 +57,7 @@ describe('字典管理（e2e）', () => {
 
     const groups = res.body.data.groups as { key: string; items: unknown[] }[];
     expect(groups.map((g) => g.key)).toEqual(['rateLimit', 'security', 'retention', 'backup', 'missing', 'limits']);
-    expect(groups[0].items).toHaveLength(5);
+    expect(groups[0].items).toHaveLength(6);
     expect(groups[1].items).toHaveLength(3);
     expect(groups[2].items).toHaveLength(2);
     expect(groups[3].items).toHaveLength(2);
@@ -67,6 +67,7 @@ describe('字典管理（e2e）', () => {
     // 测试环境限流默认关闭、扫描默认开启；全部仍是 env 基线
     expect(itemOf(res, 'rateLimit.enabled')).toMatchObject({ value: false, overridden: false, type: 'boolean' });
     expect(itemOf(res, 'rateLimit.authMax')).toMatchObject({ value: 10, overridden: false, type: 'int', min: 1 });
+    expect(itemOf(res, 'rateLimit.registryMax')).toMatchObject({ value: 20_000, overridden: false, type: 'int' });
     expect(itemOf(res, 'security.scanEnabled')).toMatchObject({ value: true, overridden: false });
     expect(itemOf(res, 'security.requireSignature')).toMatchObject({ value: false, overridden: false });
   });

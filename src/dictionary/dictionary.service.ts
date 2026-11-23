@@ -72,7 +72,16 @@ export const DICTIONARY_DEFS: DictionaryDef[] = [
     type: 'int',
     min: 1,
     max: 1_000_000,
-    hint: '查询、下载等读操作在单窗口内允许的最大次数',
+    hint: '控制台 API 查询等读操作的上限；registry 协议请求不计入此配额',
+  },
+  {
+    key: 'rateLimit.registryMax',
+    group: 'rateLimit',
+    label: 'Registry 读上限（次/窗口）',
+    type: 'int',
+    min: 1,
+    max: 1_000_000,
+    hint: 'npm/pypi 协议 GET/HEAD 独立配额（search、packument、simple 索引、tarball 下载）。dshmarket 每次开页约 400 次请求，批量安装也按依赖逐个拉取，需保持较高值；修改后三角色进程自动同步，无需重启',
   },
   {
     key: 'security.scanEnabled',

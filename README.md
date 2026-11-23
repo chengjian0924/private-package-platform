@@ -97,7 +97,8 @@ npm run start:test# 测试环境：http://localhost:3100，数据目录 data/tes
 | --- | --- | --- | --- |
 | `NODE_ENV` | `development` | `test` | 运行环境标识 |
 | `PORT` | `3000` | `3100` | 监听端口 |
-| `BIND_HOST` | `0.0.0.0` | 同左 | 监听地址（A4）；当前生产为 HTTP 直连形态，保持 `0.0.0.0` 或绑内网网卡 IP；切回 Nginx 网关后设 `127.0.0.1`，IPv6-only 内网设 `::` |
+| `DEPLOY_MODE` | `direct` | 同左 | 部署形态：`direct`（默认，端口直连）或 `gateway`（统一网关）。**只有** gateway 形态护栏才强制 `BIND_HOST=127.0.0.1`，直连形态保持 `0.0.0.0` 不会被拒绝启动 |
+| `BIND_HOST` | `0.0.0.0` | 同左 | 监听地址；direct 形态保持 `0.0.0.0`（Docker 的 8860/8861/8862 → 3000 映射依赖），gateway 形态必须 `127.0.0.1`，IPv6-only 内网设 `::` |
 | `DATA_DIR` | `./data/dev` | `./data/test` | SQLite 与包文件根目录 |
 | `DICTIONARY_SYNC_INTERVAL_MS` | `1000` | `1000` | 字典覆盖层跨进程回读间隔（毫秒，0–60000，0 表示每次读取都回读）；三角色共享同一库，字典保存后其他进程在该间隔内自动同步，无需重启 |
 | `PUBLIC_BASE_URL` | `http://localhost:3000` | `http://localhost:3100` | 生成 tarball / 下载地址的基址 |
@@ -179,7 +180,8 @@ npm run start:test# 测试环境：http://localhost:3100，数据目录 data/tes
 | `RATE_LIMIT_WINDOW_MS` | `60000` | 同左 | 限流窗口（毫秒）。**可在控制台「字典管理」中运行时覆盖** |
 | `RATE_LIMIT_AUTH_MAX` | `10` | 同左 | 认证类路由窗口内上限。**可在控制台「字典管理」中运行时覆盖** |
 | `RATE_LIMIT_WRITE_MAX` | `60` | 同左 | 写类路由窗口内上限。**可在控制台「字典管理」中运行时覆盖** |
-| `RATE_LIMIT_READ_MAX` | `600` | 同左 | 读类路由窗口内上限。**可在控制台「字典管理」中运行时覆盖** |
+| `RATE_LIMIT_READ_MAX` | `600` | 同左 | 控制台 API 等读类路由窗口内上限；registry 协议请求不计入此桶。**可在控制台「字典管理」中运行时覆盖** |
+| `RATE_LIMIT_REGISTRY_MAX` | `20000` | 同左 | `/npm/*`、`/pypi/*` 协议 GET/HEAD 的独立上限（npm 与 pypi 分开计数），避免 dshmarket / pip / npm 批量拉取触发 429。**可在控制台「字典管理」中运行时覆盖** |
 | `LOG_FILE_ENABLED` | `true` | `false` | 是否把结构化日志额外按天落盘到 `LOG_DIR`（journald 采集的部署可关闭；关闭后日志清理空转） |
 | `LOG_DIR` | `<DATA_DIR>/logs` | 同左 | 日志目录；清理任务只删该目录下的 `*.log` / `*.log.N` / `*.log.gz` |
 | `LOG_RETENTION_DAYS` | `180` | `180` | 日志文件保留天数，默认半年，`0` 表示不自动清理。**可在控制台「字典管理」中运行时覆盖** |

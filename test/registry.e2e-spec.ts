@@ -204,6 +204,12 @@ describe('npm / PyPI registry 协议（e2e）', () => {
     const fallback = await request(ctx.baseUrl).get('/npm/-/v1/search?text=e2e-search&size=abc&from=-5').expect(200);
     expect(fallback.body.total).toBe(4);
     expect(fallback.body.objects.length).toBeGreaterThan(0);
+
+    // 空串参数（?size=&from=）本质是"未传参"，必须回退默认 250 而不是钳到 size=1；
+    // 否则 dshmarket 传入空 size 时每页只有 1 条，再次出现"插件市场显示不全"。
+    const emptyParams = await request(ctx.baseUrl).get('/npm/-/v1/search?text=e2e-search&size=&from=').expect(200);
+    expect(emptyParams.body.total).toBe(4);
+    expect(emptyParams.body.objects).toHaveLength(4);
   });
 
   it('npm 重复版本与非法版本返回 registry 错误体', async () => {

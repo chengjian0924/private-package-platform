@@ -34,7 +34,7 @@ export function securityHeaders(req: Request, res: Response, next: NextFunction)
   next();
 }
 
-type Scope = 'auth' | 'write' | 'read';
+type Scope = 'auth' | 'write' | 'read' | 'npm' | 'pypi';
 
 interface Window {
   count: number;
@@ -57,9 +57,25 @@ export function resetRateLimitState(): void {
  */
 const AUTH_SCOPED_PATHS = new Set(['/api/v1/auth/login', '/api/v1/auth/change-password', '/auth/login']);
 
-function scopeOf(req: Request): Scope {
+/**
+ * registry 协议入口（/npm/*、/pypi/*）由包管理器批量拉取：
+ * dshmarket 打开一次市场页会发约 400 个 search/catalog GET，
+ * pip/npm 批量安装也会为每个依赖拉 simple 页面/packument 与 tarball。
+ * 这些请求若和控制台 API 共用 readMax=600 桶，正常使用就会被 429 打断，
+ * 因此 GET/HEAD 按协议拆成 npm/pypi 独立桶，写请求仍走 writeMax。
+ */
+export function rateLimitScopeOf(req: Request): Scope {
   const path = (req.path || '').toLowerCase();
   if (AUTH_SCOPED_PATHS.has(path)) return 'auth';
+
+  const registry: Exclude<Scope, 'auth' | 'write' | 'read'> | null =
+    path === '/npm' || path.startsWith('/npm/')
+      ? 'npm'
+      : path === '/pypi' || path.startsWith('/pypi/')
+        ? 'pypi'
+        : null;
+  if (registry && (req.method === 'GET' || req.method === 'HEAD')) return registry;
+
   if (req.method === 'GET' || req.method === 'HEAD') return 'read';
   return 'write';
 }
@@ -109,8 +125,16 @@ export function rateLimit(req: Request, res: Response, next: NextFunction): void
     return;
   }
 
-  const scope = scopeOf(req);
-  const limit = scope === 'auth' ? cfg.authMax : scope === 'write' ? cfg.writeMax : cfg.readMax;
+  const scope = rateLimitScopeOf(req);
+  const limit =
+    scope === 'auth'
+      ? cfg.authMax
+      : scope === 'write'
+        ? cfg.writeMax
+        : scope === 'read'
+          ? cfg.readMax
+          : cfg.registryMax;
+  // npm/pypi 各自独立计数，避免一侧的批量拉取把另一侧的客户端饿死
   const key = `${scope}:${req.ip || 'unknown'}`;
   const result = checkRateLimit(key, limit, cfg.windowMs);
 
