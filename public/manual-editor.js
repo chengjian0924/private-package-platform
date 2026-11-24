@@ -40,6 +40,8 @@
     ['package:read', '包查看（全角色）'],
   ];
 
+  var HINT_TEXT = '粘贴 Markdown / 网页内容会自动转成排版';
+
   var BAR_HTML =
     '<div class="me-bar" role="toolbar" aria-label="排版工具栏">' +
     '<select class="me-select" data-me="block" aria-label="段落类型" title="段落类型">' +
@@ -57,7 +59,7 @@
     '<button type="button" class="me-btn" data-me="perm" title="限定该段可见权限" aria-label="限定可见权限">权限</button>' +
     '<span class="me-sep" aria-hidden="true"></span>' +
     '<button type="button" class="me-btn me-plain" data-me="clear" title="清除本段格式" aria-label="清除格式">清除格式</button>' +
-    '<div class="me-hint">粘贴 Markdown / 网页内容会自动转成排版</div>' +
+    '<div class="me-hint">' + HINT_TEXT + '</div>' +
     '<div class="me-pop hidden" role="dialog" aria-label="工具面板"></div>' +
     '</div>' +
     '<div class="me-canvas" contenteditable="true" spellcheck="false" ' +
@@ -353,6 +355,18 @@
    * 在克隆节点上做，避免改动用户正在看的 DOM（光标位置不会跳）。
    */
   function normalize(root) {
+    // 点了「行内代码」但还没输入时用零宽空格占位，落库前必须清掉，
+    // 否则数据库里会存下一串看不见的字符
+    var cleanDoc = root.ownerDocument;
+    var walker = cleanDoc.createTreeWalker(root, 4 /* NodeFilter.SHOW_TEXT */, null, false);
+    var textNodes = [];
+    while (walker.nextNode()) textNodes.push(walker.currentNode);
+    textNodes.forEach(function (node) {
+      if (node.nodeValue.indexOf('\u200b') !== -1) {
+        node.nodeValue = node.nodeValue.replace(/\u200b/g, '');
+      }
+    });
+
     // 顶层裸文本包成段落，否则保存后会丢
     var loose = [];
     Array.prototype.forEach.call(root.childNodes, function (node) {
@@ -425,6 +439,18 @@
         } else {
           node.setAttribute('target', '_blank');
         }
+      }
+    });
+
+    // 空的代码片段（占位后没输入就离开）不落库，否则会显示成一个空灰块
+    Array.prototype.slice.call(root.querySelectorAll('code')).forEach(function (node) {
+      var parent = node.parentElement;
+      while (parent && parent !== root) {
+        if (parent.tagName === 'PRE') return;
+        parent = parent.parentElement;
+      }
+      if (!node.textContent) {
+        if (node.parentNode) node.parentNode.removeChild(node);
       }
     });
 
@@ -519,9 +545,15 @@
     var bar = wrap.querySelector('.me-bar');
     var select = wrap.querySelector('[data-me="block"]');
     var pop = wrap.querySelector('.me-pop');
+    var hint = wrap.querySelector('.me-hint');
+    var hintTimer = null;
     var cleanups = [];
     var inst = { section: section, wrap: wrap, canvas: canvas, cleanups: cleanups };
     section.__me = inst;
+    cleanups.push(function () {
+      if (hintTimer) global.clearTimeout(hintTimer);
+      hintTimer = null;
+    });
 
     function closePop() {
       pop.classList.add('hidden');
@@ -535,8 +567,22 @@
         if (!sel || !sel.rangeCount) return null;
         node = sel.getRangeAt(0).startContainer;
       }
+      return blockOf(node);
+    }
+
+    /** 从任意节点往上找最近的块级容器（停在编辑区边界） */
+    function blockOf(node) {
       while (node && node !== canvas) {
         if (node.nodeType === 1 && BLOCK_TAGS[node.tagName]) return node;
+        node = node.parentNode;
+      }
+      return null;
+    }
+
+    /** 往上找最近的指定标签（限编辑区内） */
+    function closestTag(node, tagName) {
+      while (node && node !== canvas) {
+        if (node.nodeType === 1 && node.tagName === tagName) return node;
         node = node.parentNode;
       }
       return null;
@@ -569,7 +615,7 @@
       var sel = global.getSelection();
       var range = sel && sel.rangeCount ? sel.getRangeAt(0).cloneRange() : null;
       canvas.focus();
-      if (range && sel) {
+      if (range && sel && canvas.contains(range.startContainer)) {
         sel.removeAllRanges();
         sel.addRange(range);
       }
@@ -653,6 +699,42 @@
       });
     }
 
+    /**
+     * 清除格式：把当前段还原成普通正文。
+     * - 代码块整块降级（块内没有「行内格式」可清，留着 pre 会一直是等宽大块）
+     * - 列表项只清行内格式，拆掉 li 会在列表里留一个空位
+     */
+    function clearBlockFormat() {
+      withCaret(function () {
+        var block = currentBlock();
+        if (!block) {
+          flashHint('先把光标放到要清除格式的段落里', 'warn');
+          return;
+        }
+
+        if (block.tagName === 'PRE') {
+          var p = doc.createElement('p');
+          p.className = 'manual-note';
+          p.textContent = block.textContent || '';
+          if (block.parentNode) block.parentNode.replaceChild(p, block);
+          placeCaretAtEnd(p);
+          syncSelect();
+          return;
+        }
+
+        doc.execCommand('removeFormat');
+        if (block.tagName === 'LI' || block.tagName === 'TD' || block.tagName === 'TH') {
+          syncSelect();
+          return;
+        }
+
+        doc.execCommand('formatBlock', false, 'P');
+        var next = currentBlock();
+        if (next && next.tagName === 'P') next.className = 'manual-note';
+        syncSelect();
+      });
+    }
+
     // 浮层打开后焦点会离开编辑区，先把选区与目标块记下来，确认时再恢复
     var savedRange = null;
     var savedText = '';
@@ -660,13 +742,14 @@
 
     function rememberSelection() {
       var sel = global.getSelection();
-      savedText = sel ? sel.toString() : '';
-      savedRange = sel && sel.rangeCount ? sel.getRangeAt(0).cloneRange() : null;
+      if (!sel || !sel.rangeCount || !sel.anchorNode || !canvas.contains(sel.anchorNode)) return;
+      savedText = sel.isCollapsed ? '' : sel.toString();
+      savedRange = sel.getRangeAt(0).cloneRange();
     }
 
     function restoreSelection() {
       canvas.focus();
-      if (!savedRange) return;
+      if (!savedRange || !canvas.contains(savedRange.startContainer)) return;
       var sel = global.getSelection();
       if (!sel) return;
       sel.removeAllRanges();
@@ -674,12 +757,70 @@
     }
 
     function insertInlineCode() {
-      withCaret(function () {
-        var sel = global.getSelection();
-        if (!sel || sel.isCollapsed) return;
-        var text = sel.toString();
-        doc.execCommand('insertHTML', false, '<code>' + escapeHtml(text) + '</code>');
-      });
+      var sel = global.getSelection();
+      if (!sel || !sel.rangeCount || !canvas.contains(sel.anchorNode)) {
+        flashHint('先把光标放到要加代码的位置，或选中要变成代码的文字', 'warn');
+        return;
+      }
+
+      var range = sel.getRangeAt(0);
+      if (range.collapsed) {
+        // 没选中文字：插一个空的 code 把光标放进去，接着敲就是代码
+        var empty = doc.createElement('code');
+        empty.appendChild(doc.createTextNode('\u200b'));
+        range.insertNode(empty);
+        var inside = doc.createRange();
+        inside.setStart(empty.firstChild, 1);
+        inside.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(inside);
+        canvas.focus();
+        return;
+      }
+
+      var startBlock = blockOf(range.startContainer);
+      var endBlock = blockOf(range.endContainer);
+      if (startBlock && endBlock && startBlock !== endBlock) {
+        flashHint('行内代码只能用于同一段落内的文字', 'warn');
+        return;
+      }
+      if (startBlock && startBlock.tagName === 'PRE') return;
+
+      // 选区已经整块在某段行内代码里 → 再点一次取消（toggle）
+      var host = closestTag(range.startContainer, 'CODE');
+      if (host && host === closestTag(range.endContainer, 'CODE') && !closestTag(host, 'PRE')) {
+        unwrap(host);
+        canvas.focus();
+        return;
+      }
+
+      // 不用 execCommand('insertHTML')：它会改写选区两侧空格（插入 &nbsp;、吞掉尾随空格），
+      // 表现为「代码块前后的字粘在一起」。直接用 Range 搬运节点，原文一个字符都不动。
+      var contents = range.extractContents();
+      var code = doc.createElement('code');
+      code.appendChild(contents);
+      range.insertNode(code);
+
+      var around = doc.createRange();
+      around.selectNodeContents(code);
+      sel.removeAllRanges();
+      sel.addRange(around);
+      canvas.focus();
+    }
+
+    /** 统一的轻提示：借用工具栏右侧的说明位，不弹窗打断 */
+    function flashHint(message, tone) {
+      if (!hint) return;
+      hint.textContent = message;
+      hint.title = message;
+      hint.classList.toggle('is-warn', tone === 'warn');
+      if (hintTimer) global.clearTimeout(hintTimer);
+      hintTimer = global.setTimeout(function () {
+        hint.textContent = HINT_TEXT;
+        hint.title = '';
+        hint.classList.remove('is-warn');
+        hintTimer = null;
+      }, 2600);
     }
 
     /**
@@ -741,10 +882,41 @@
         input.reportValidity();
         return;
       }
-      var label = savedText ? savedText : url;
       restoreSelection();
-      doc.execCommand('insertHTML', false,
-        '<a href="' + escapeAttr(url) + '" target="_blank">' + escapeHtml(label) + '</a>');
+      var sel = global.getSelection();
+      var range = sel && sel.rangeCount ? sel.getRangeAt(0) : null;
+      if (!range || !canvas.contains(range.startContainer)) {
+        closePop();
+        flashHint('链接需要插在正文里，先把光标放到段落中', 'warn');
+        return;
+      }
+
+      var link = doc.createElement('a');
+      link.setAttribute('href', url);
+      link.setAttribute('target', '_blank');
+      if (!range.collapsed) {
+        // 跨段落选中的内容搬进 <a> 会得到 <a><p>…</p></a> 这种非法嵌套，直接拦下
+        var from = blockOf(range.startContainer);
+        var to = blockOf(range.endContainer);
+        if (from && to && from !== to) {
+          closePop();
+          flashHint('链接不能跨段落，请先选中同一段内的文字', 'warn');
+          return;
+        }
+        // 保留选中文字原有的加粗/代码等格式，而不是退化成纯文本
+        link.appendChild(range.extractContents());
+      } else {
+        link.textContent = savedText || url;
+      }
+      range.insertNode(link);
+
+      // 光标移到链接之后，方便接着输入
+      var after = doc.createRange();
+      after.setStartAfter(link);
+      after.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(after);
+      canvas.focus();
       closePop();
     }
 
@@ -782,8 +954,18 @@
     }
 
     bar.addEventListener('mousedown', function (event) {
-      // 防止点工具栏时编辑区失焦、选区丢失
-      if (event.target.closest('.me-pop')) return;
+      var target = event.target;
+      if (!target || !target.closest) return;
+      // 浮层里的输入框与按钮要能正常聚焦
+      if (target.closest('.me-pop')) return;
+      // 原生下拉/输入框必须保留默认行为：preventDefault 会让 <select> 直接打不开，
+      // 同时先把光标位置记下来，下拉展开会带走焦点与选区
+      if (target.closest('select, input, textarea')) {
+        closePop();
+        rememberSelection();
+        return;
+      }
+      // 其余按钮：防止点工具栏时编辑区失焦、选区丢失
       event.preventDefault();
     });
 
@@ -818,21 +1000,39 @@
       } else if (cmd === 'perm') {
         openPermPop();
       } else if (cmd === 'clear') {
-        canvas.focus();
-        doc.execCommand('removeFormat');
-        doc.execCommand('formatBlock', false, 'P');
-        var block = currentBlock();
-        if (block) block.className = 'manual-note';
+        clearBlockFormat();
       }
     });
 
     select.addEventListener('change', function () {
+      restoreSelection();
+      if (!currentBlock() && canvas.textContent.trim()) {
+        flashHint('先把光标放到要改格式的段落里', 'warn');
+        syncSelect();
+        return;
+      }
       applyBlock(select.value);
+      syncSelect();
     });
 
     // 有改动就把工具栏标成待保存态，保存后编辑器会重建，标记自然消失
     canvas.addEventListener('input', function () {
       wrap.classList.add('is-dirty');
+    });
+
+    // 点了「行内代码」却没输入就离开：把空占位删掉，不留在正文里当小灰点
+    canvas.addEventListener('blur', function () {
+      var removed = false;
+      Array.prototype.slice.call(canvas.querySelectorAll('code')).forEach(function (code) {
+        if (code.closest('pre')) return;
+        if (code.textContent.replace(/\u200b/g, '') !== '') return;
+        if (code.parentNode) {
+          code.parentNode.removeChild(code);
+          removed = true;
+        }
+      });
+      // 拆掉占位后前后会留下两段相邻文本节点，合并回去免得后续插入位置错乱
+      if (removed) canvas.normalize();
     });
 
     canvas.addEventListener('paste', function (event) {      var data = event.clipboardData;

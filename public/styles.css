@@ -2366,17 +2366,26 @@ textarea.input {
   border-radius: var(--radius-sm, 8px);
   background: var(--surface-2);
 }
+/* 下拉箭头统一用自绘 SVG：原生箭头紧贴右边缘且各平台不一致，与控制台其它下拉也不一致 */
 .me-select {
   height: 28px;
-  padding: 0 8px;
+  min-width: 94px;
+  padding: 0 28px 0 9px;
   border: 1px solid var(--line-strong);
   border-radius: 6px;
-  background: var(--surface);
+  background-color: var(--surface);
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236a7387' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-position: right 9px center;
+  background-repeat: no-repeat;
+  background-size: 14px 14px;
+  appearance: none;
+  -webkit-appearance: none;
   color: var(--ink-2);
   font-family: inherit;
   font-size: var(--fs-xs);
   cursor: pointer;
 }
+.me-select:hover { border-color: var(--accent); }
 .me-select:focus-visible { outline: 0; box-shadow: var(--focus-ring); }
 .me-btn {
   height: 28px;
@@ -2397,7 +2406,20 @@ textarea.input {
 .me-plain { color: var(--muted); }
 .manual-edit-area.is-dirty .me-bar { border-color: var(--warn); background: var(--warn-soft); }
 .me-sep { width: 1px; height: 18px; background: var(--line); }
-.me-hint { margin-left: auto; color: var(--muted-2); font-size: var(--fs-xs); }
+.me-hint {
+  margin-left: auto;
+  max-width: 46%;
+  overflow: hidden;
+  color: var(--muted-2);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+/* 操作没生效时的就地提示（例如行内代码跨段、光标不在正文内） */
+.me-hint.is-warn { color: var(--warn); font-weight: 600; }
+@media (max-width: 720px) {
+  .me-hint { max-width: 100%; margin-left: 0; white-space: normal; }
+}
 
 /* 工具浮层（链接 / 权限） */
 .me-pop {
