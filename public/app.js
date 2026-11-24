@@ -358,7 +358,12 @@
   function applyManualVisibility() {
     var view = $('view-manual');
     if (!view) return;
+    // 编辑态由管理员操作，需要看到全部段落（包括自己无权限的），否则看不见就没法改
     view.querySelectorAll('[data-manual-perm]').forEach(function (el) {
+      if (manualState.editMode) {
+        el.classList.remove('hidden');
+        return;
+      }
       var required = (el.getAttribute('data-manual-perm') || '').split(',');
       var ok = required.every(function (perm) {
         return hasPerm(perm.trim());
@@ -439,6 +444,8 @@
 
   function loadManualContent(options) {
     var opts = options || {};
+    // 编辑中不拉取、不重绘：会把编辑器连同未保存的修改一起拆掉
+    if (manualState.editMode) return Promise.resolve();
     if (manualState.loaded && !opts.force) {
       applyManualOverrides();
       applyManualVisibility();
@@ -460,42 +467,50 @@
       });
   }
 
+  /**
+   * 进入 / 退出编辑态。
+   * 进入：每个章节挂一个所见即所得编辑器（正文本身可编辑 + 顶部排版工具栏）。
+   * 退出：拆掉编辑器，按当前生效内容重绘只读正文（丢弃未保存修改由调用方决定）。
+   */
   function setManualEditMode(on) {
-    manualState.editMode = Boolean(on);
+    var wantEdit = Boolean(on);
+    if (wantEdit && !window.ManualEditor) {
+      showToast('编辑器脚本未加载，请刷新页面后重试', 'err');
+      return;
+    }
+    manualState.editMode = wantEdit;
     var toggle = $('manual-edit-toggle');
-    if (toggle) toggle.textContent = manualState.editMode ? '退出编辑' : '编辑手册';
+    if (toggle) toggle.textContent = wantEdit ? '退出编辑' : '编辑手册';
     ['manual-save', 'manual-defaults'].forEach(function (id) {
-      if ($(id)) $(id).classList.toggle('hidden', !manualState.editMode);
+      if ($(id)) $(id).classList.toggle('hidden', !wantEdit);
     });
+    var hint = $('manual-edit-hint');
+    if (hint) hint.classList.toggle('hidden', !wantEdit);
 
     document.querySelectorAll('#view-manual .manual-sec').forEach(function (sec) {
-      var area = null;
-      Array.prototype.forEach.call(sec.children, function (child) {
-        if (child.classList.contains('manual-edit-area')) area = child;
-      });
-      if (!area) {
-        area = document.createElement('div');
-        area.className = 'manual-edit-area';
-        var textarea = document.createElement('textarea');
-        textarea.setAttribute('data-manual-edit', sec.id);
-        textarea.setAttribute('aria-label', '编辑 ' + (sec.getAttribute('data-manual-title') || sec.id) + ' 内容');
-        area.appendChild(textarea);
-        sec.appendChild(area);
-      }
-      area.classList.toggle('hidden', !manualState.editMode);
-      if (manualState.editMode) {
-        var ta = area.querySelector('textarea');
-        ta.value = effectiveManualHtml(sec.id);
-        ta.classList.remove('manual-changed');
+      if (wantEdit) {
+        window.ManualEditor.attach(sec, {
+          html: effectiveManualHtml(sec.id),
+          title: sec.getAttribute('data-manual-title') || sec.id,
+        });
+        sec.classList.add('editing');
+      } else {
+        window.ManualEditor.detach(sec);
+        sec.classList.remove('editing');
       }
     });
+
+    if (!wantEdit) applyManualOverrides();
+    applyManualVisibility();
   }
 
+  /** 读取所有发生变化的章节：编辑器内容已收敛成标准排版，与基线不一致即视为改动 */
   function manualChanges() {
     var changes = {};
-    document.querySelectorAll('#view-manual textarea[data-manual-edit]').forEach(function (ta) {
-      var id = ta.getAttribute('data-manual-edit');
-      if (ta.value !== effectiveManualHtml(id)) changes[id] = ta.value;
+    document.querySelectorAll('#view-manual .manual-sec').forEach(function (sec) {
+      if (!window.ManualEditor || !window.ManualEditor.isAttached(sec)) return;
+      var html = window.ManualEditor.read(sec);
+      if (html !== effectiveManualHtml(sec.id)) changes[sec.id] = html;
     });
     return changes;
   }
@@ -506,13 +521,22 @@
       showToast('没有需要保存的修改', 'info');
       return;
     }
+    // 空内容在服务端等同于「恢复内置默认」，容易变成误删整章，这里直接拦下
+    var blank = Object.keys(changes).filter(function (id) { return !changes[id]; });
+    if (blank.length) {
+      var titles = blank.map(function (id) {
+        var sec = document.getElementById(id);
+        return sec ? sec.getAttribute('data-manual-title') || id : id;
+      });
+      showToast('章节内容不能为空：' + titles.join('、') + '；如需还原请用「恢复默认」', 'warn');
+      return;
+    }
     setButtonLoading($('manual-save'), true);
     api('/api/v1/manual/content', { method: 'PUT', body: { sections: changes } })
       .then(function (data) {
         manualState.overrides = (data && data.sections) || {};
-        applyManualOverrides();
-        applyManualVisibility();
-        // 重新写入 textarea，保证「已保存」后的基线就是当前内容
+        // 先退回只读重绘，再重新进入编辑：基线随之更新为刚保存的内容
+        setManualEditMode(false);
         setManualEditMode(true);
         showToast('用户手册已保存，所有登录用户可见', 'ok');
       })
@@ -524,8 +548,8 @@
 
   function resetManualDefaults() {
     var sections = {};
-    document.querySelectorAll('#view-manual textarea[data-manual-edit]').forEach(function (ta) {
-      sections[ta.getAttribute('data-manual-edit')] = '';
+    document.querySelectorAll('#view-manual .manual-sec').forEach(function (sec) {
+      sections[sec.id] = '';
     });
     if (!Object.keys(sections).length) return;
     confirmAction({
@@ -539,8 +563,7 @@
       api('/api/v1/manual/content', { method: 'PUT', body: { sections: sections } })
         .then(function (data) {
           manualState.overrides = (data && data.sections) || {};
-          applyManualOverrides();
-          applyManualVisibility();
+          setManualEditMode(false);
           setManualEditMode(true);
           showToast('已恢复内置手册', 'ok');
         })
@@ -3490,11 +3513,6 @@
     });
     $('manual-save').addEventListener('click', saveManualContent);
     $('manual-defaults').addEventListener('click', resetManualDefaults);
-    document.addEventListener('input', function (e) {
-      if (!e.target || !e.target.matches || !e.target.matches('textarea[data-manual-edit]')) return;
-      var id = e.target.getAttribute('data-manual-edit');
-      e.target.classList.toggle('manual-changed', e.target.value !== effectiveManualHtml(id));
-    });
 
     // 确认弹窗：取消默认聚焦，降低回车误触危险操作的概率
     $('confirm-cancel').addEventListener('click', function () {

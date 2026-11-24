@@ -235,7 +235,7 @@ curl -s http://127.0.0.1:3000/api/v1/auth/me
 
 「字典管理」仅管理员可见（`config:manage` 权限），用于统一维护系统运行时配置：限流参数（开关 / 窗口 / 认证 / 读写上限）、漏洞扫描校验开关（扫描总开关 / 强制签名 / 漏洞库拦截）、保留清理策略（软删除包可恢复天数、日志文件保留天数，均默认 `30` / `180` 天，填 `0` 表示不自动清理）、包文件备份（启用开关、同步间隔）、缺包自动上报，以及**上传包大小上限**（npm / PyPI 分别设置，默认 200MB，用于放行大型离线插件包；控制台以 MB 为单位输入，系统内部按字节存储与校验；不得超过 env 的 HTTP 硬天花板）。保存后写入 `sys_dictionary` 表持久化并即时生效（业务模块经 `getConfig()` 读取 env 基线 + 字典覆盖的合并结果，无需重启）；三角色共享同一数据库，覆盖层按 `DICTIONARY_SYNC_INTERVAL_MS`（默认 1000ms）自动回读，控制台的变更会同步到 npm / pypi 进程，不需要逐容器重启。每次变更落审计日志（`config.dictionary.update`）。API：`GET/PUT /api/v1/dictionary`。
 
-「用户手册」所有登录用户只读，管理员可在页面内点「编辑手册」修改章节内容并保存，普通用户下次进入即看到同一份内容。覆盖项按章节存 `user_manual` 表，未改过的章节用内置静态手册；「恢复默认」清空全部覆盖。写入时服务端按白名单清洗 HTML，脚本、事件属性与 `javascript:` 链接不会落库；每次保存写审计 `manual.content.update`。API：`GET/PUT /api/v1/manual/content`（PUT 需要 `config:manage`）。
+「用户手册」所有登录用户只读，管理员可在页面内点「编辑手册」进入**所见即所得**编辑：直接在正文上改字，工具栏切换正文/要点/小标题/步骤/代码块，支持加粗、行内代码、链接与「该段可见权限」；粘贴 Markdown 或网页内容会自动转成排版，无需写 HTML。覆盖项按章节存 `user_manual` 表，未改过的章节用内置静态手册；「恢复默认」清空全部覆盖。写入时服务端按白名单清洗 HTML，脚本、事件属性与 `javascript:` 链接不会落库；每次保存写审计 `manual.content.update`。API：`GET/PUT /api/v1/manual/content`（PUT 需要 `config:manage`）。
 
 保留期清理由控制台进程的 `RetentionScheduler` 每小时执行一轮（可用 `RETENTION_SWEEP_INTERVAL_MS` 调整）：软删除版本超期后连同对象文件、扫描记录及报告一起硬删除，包内版本被删光的包壳一并回收；日志清理只处理 `LOG_DIR` 下的日志文件，目录内其它文件不动。清理动作写审计（`retention.packages.purge`）。
 

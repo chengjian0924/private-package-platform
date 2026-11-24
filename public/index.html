@@ -564,6 +564,12 @@
           <div class="manual-toc-links" id="manual-toc-links"></div>
         </div>
 
+        <!-- 编辑态提示条：管理员进入编辑后出现，说明不用写 HTML -->
+        <div class="manual-edit-hint card hidden" id="manual-edit-hint">
+          <svg class="icon" aria-hidden="true"><use href="#i-info"></use></svg>
+          <p>正在编辑：点击任意正文即可直接修改，用每节上方的工具栏调整段落格式、代码块与「可见权限」。从文档、网页或 Markdown 复制的内容粘贴进来会自动转成排版，无需接触 HTML。改完点右上角「保存修改」，所有登录用户立即可见。</p>
+        </div>
+
         <div class="card manual-sec" id="manual-login" data-manual-title="登录与账号">
           <div class="card-head"><h3>登录与账号</h3></div>
           <p class="manual-note"><b>用途</b>：进入控制台，管理自己的登录状态与口令。</p>
@@ -970,6 +976,7 @@ twine upload --repository-url http://&lt;host&gt;:3000/pypi/ dist/*</code></pre>
 
   <div id="toast" class="toast-stack" role="status" aria-live="polite" aria-atomic="false"></div>
   <script src="/pagination.js"></script>
+  <script src="/manual-editor.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

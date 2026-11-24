@@ -69,7 +69,8 @@ function safeHref(value: string): boolean {
 }
 
 function safePermission(value: string): boolean {
-  return /^[a-z]+:[a-z]+(,[a-z]+:[a-z]+)*$/.test(value);
+  // 权限点允许两段或三段（security:read:own 这类「范围收窄」写法），逗号分隔表示需同时具备
+  return /^[a-z]+(?::[a-z]+){1,2}(?:,[a-z]+(?::[a-z]+){1,2})*$/.test(value);
 }
 
 function parseAttrs(token: string): Array<[string, string]> {

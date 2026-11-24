@@ -2321,32 +2321,167 @@ textarea.input {
 .manual .table { min-width: 620px; }
 .manual .table td { font-size: var(--fs-xs); line-height: var(--lh); }
 
-/* 手册编辑：管理员在章节末尾直接编辑 HTML 源片段，普通用户看不到 */
+/* ========== 用户手册编辑（所见即所得） ==========
+   管理员点「编辑手册」后，正文本身变成可编辑区，工具栏负责排版转换；
+   管理员全程不需要接触 HTML 标签。 */
+.manual-edit-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-size: var(--fs-xs);
+  line-height: var(--lh);
+}
+.manual-edit-hint .icon { flex: none; margin-top: 1px; color: var(--accent); }
+.manual-edit-hint p { margin: 0; }
+.manual-edit-hint b { color: var(--accent-ink); font-weight: 600; }
+
+.manual-sec.editing {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
 .manual-edit-area {
-  margin-top: 16px;
-  padding-top: 14px;
+  margin-top: 14px;
+  padding-top: 12px;
   border-top: 1px dashed var(--line-strong);
 }
-.manual-edit-area textarea {
-  width: 100%;
-  min-height: 180px;
-  box-sizing: border-box;
+
+/* 工具栏：粘在章节顶部，滚动长章节时仍可调格式 */
+.me-bar {
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm, 8px);
+  background: var(--surface-2);
+}
+.me-select {
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink-2);
+  font-family: inherit;
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+.me-select:focus-visible { outline: 0; box-shadow: var(--focus-ring); }
+.me-btn {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink-2);
+  font-family: inherit;
+  font-size: var(--fs-xs);
+  line-height: 1;
+  cursor: pointer;
+  transition: background var(--t-fast), border-color var(--t-fast), color var(--t-fast);
+}
+.me-btn:hover { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-ink); }
+.me-btn:focus-visible { outline: 0; box-shadow: var(--focus-ring); }
+.me-bold { min-width: 32px; font-family: var(--font-mono); font-weight: 700; }
+.me-plain { color: var(--muted); }
+.manual-edit-area.is-dirty .me-bar { border-color: var(--warn); background: var(--warn-soft); }
+.me-sep { width: 1px; height: 18px; background: var(--line); }
+.me-hint { margin-left: auto; color: var(--muted-2); font-size: var(--fs-xs); }
+
+/* 工具浮层（链接 / 权限） */
+.me-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 8px;
+  z-index: 20;
+  width: min(420px, 92vw);
   padding: 12px;
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-sm, 8px);
   background: var(--surface);
+  box-shadow: var(--shadow-md);
+}
+.me-pop-title { margin: 0 0 8px; color: var(--muted); font-size: var(--fs-xs); }
+.me-pop-label { display: block; color: var(--muted); font-size: var(--fs-xs); }
+.me-pop-input { width: 100%; margin-top: 6px; box-sizing: border-box; }
+.me-pop-tip { margin: 8px 0 0; color: var(--muted-2); font-size: var(--fs-xs); }
+.me-pop-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+.me-perm-list { display: grid; gap: 4px; max-height: 240px; overflow-y: auto; }
+.me-perm {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: var(--surface-2);
   color: var(--ink-2);
-  font-family: var(--font-mono);
+  font-family: inherit;
   font-size: var(--fs-xs);
-  line-height: 1.6;
-  resize: vertical;
+  text-align: left;
+  cursor: pointer;
 }
-.manual-edit-area textarea:focus {
+.me-perm:hover { border-color: var(--accent); background: var(--accent-soft); }
+.me-perm.active { border-color: var(--accent); background: var(--accent-soft); }
+.me-perm code { font-family: var(--font-mono); font-size: 11px; color: var(--ink); }
+.me-perm span { color: var(--muted); }
+
+/* 编辑画布：直接复用正文排版，所见即所得 */
+.me-canvas {
+  min-height: 120px;
+  padding: 2px;
+  border-radius: var(--radius-sm, 8px);
   outline: 0;
-  border-color: var(--accent);
-  box-shadow: var(--focus-ring);
+  caret-color: var(--accent);
 }
-.manual-edit-area textarea.manual-changed { border-color: var(--warn); }
+.me-canvas:empty::before {
+  content: "这一节还没有内容，直接输入即可，也可以粘贴 Markdown。";
+  color: var(--muted-2);
+  font-size: var(--fs-sm);
+}
+.me-canvas:focus-visible { box-shadow: none; }
+
+/* 权限标记：编辑态用左侧虚线 + 小标签提示，只读态不显示 */
+.me-canvas p[data-manual-perm],
+.me-canvas h4[data-manual-perm],
+.me-canvas div[data-manual-perm] {
+  border-left: 2px dashed var(--accent);
+  padding-left: 10px;
+}
+.me-canvas p[data-manual-perm]::before,
+.me-canvas h4[data-manual-perm]::before,
+.me-canvas div[data-manual-perm]::before,
+.me-canvas li[data-manual-perm]::before {
+  content: "限 " attr(data-manual-perm);
+  display: inline-block;
+  margin-right: 6px;
+  padding: 0 6px;
+  border-radius: 4px;
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 16px;
+  vertical-align: middle;
+}
+.me-canvas tr[data-manual-perm] { outline: 1px dashed var(--accent); outline-offset: -1px; }
+
+@media (max-width: 720px) {
+  .me-hint { display: none; }
+  .me-bar { position: static; }
+}
+
 
 /* ========== 动效降级 ========== */
 @media (prefers-reduced-motion: reduce) {
