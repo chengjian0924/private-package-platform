@@ -17,6 +17,7 @@ import {
   normalizeVersion,
   PackagesService,
   type Ecosystem,
+  type InsertVersionInput,
 } from '../packages/packages.service';
 import { StorageService } from '../storage/storage.service';
 import { SecurityService } from '../security/security.service';
@@ -542,6 +543,9 @@ export class ImportService {
 
     this.db.run('UPDATE import_batches SET status = ?, mode = ? WHERE id = ?', BATCH_STATUS.committing, mode, batchId);
 
+    // strict 走两阶段原子提交；partial 保留逐项容错写入
+    if (mode === 'strict') return this.commitStrict(batchId, items, operatorId);
+
     let committed = 0;
     let failed = 0;
     let skipped = 0;
@@ -618,6 +622,88 @@ export class ImportService {
     );
 
     return { batchId, status, stats };
+  }
+
+  /**
+   * strict 原子提交：阶段一（事务外）完成读文件、putObject、安全扫描等异步工作，
+   * 任一失败整体中止、零 DB 写入；阶段二在单个 db.tx() 内写入全部版本并更新条目状态，
+   * 任一失败整批回滚。对象文件在扫描通过后先落盘，失败留下的孤儿由孤儿清扫回收。
+   */
+  private async commitStrict(batchId: string, items: ItemRow[], operatorId: string) {
+    try {
+      const prepared: {
+        input: InsertVersionInput;
+        gate: Awaited<ReturnType<PackagesService['prepareScan']>>;
+        item: ItemRow;
+      }[] = [];
+      for (const item of items) {
+        if (item.status !== 'VALID') continue;
+        const detail = safeJson<ItemDetail>(item.detail, {});
+        if (!detail.storedFile) throw new ApiError('PKG_FILE_MISSING');
+        const buffer = await fsp.readFile(this.storage.absolutePath(detail.storedFile));
+        const stored = await this.storage.putObject(buffer);
+        const input: InsertVersionInput = {
+          ecosystem: item.ecosystem as InsertVersionInput['ecosystem'],
+          name: item.name,
+          version: item.version,
+          filename: (item.file_path || '').split('/').pop() || `${item.name}-${item.version}`,
+          sha256: stored.sha256,
+          sizeBytes: stored.size,
+          storageKey: stored.key,
+          metadata: { ...(detail.metadata || {}), dist: { shasum: stored.shasum, integrity: stored.integrity } },
+          compatibility: detail.compatibility || null,
+          uploaderId: operatorId,
+          source: 'batch',
+        };
+        // 异步安全扫描在事务外完成；BLOCK/QUARANTINE 抛错即整体中止，零版本入库
+        const gate = await this.packages.prepareScan(input);
+        prepared.push({ input, gate, item });
+      }
+
+      // 阶段二：单事务原子写入 + 同步更新条目状态（含 assertNotDuplicate 含软删除复检）
+      this.packages.insertVersionsAtomic(
+        prepared.map((p) => ({ input: p.input, gate: p.gate })),
+        (row, index) => {
+          this.db.run(
+            "UPDATE import_batch_items SET status = 'COMMITTED', package_version_id = ? WHERE id = ?",
+            row.id,
+            prepared[index].item.id,
+          );
+        },
+      );
+      // 非 VALID 条目标记为 SKIPPED
+      for (const item of items) {
+        if (item.status !== 'VALID') {
+          this.db.run("UPDATE import_batch_items SET status = 'SKIPPED' WHERE id = ?", item.id);
+        }
+      }
+
+      const stats = {
+        total: items.length,
+        committed: prepared.length,
+        failed: 0,
+        skipped: items.length - prepared.length,
+        mode: 'strict' as const,
+      };
+      this.db.run(
+        'UPDATE import_batches SET status = ?, stats = ?, finished_at = ? WHERE id = ?',
+        BATCH_STATUS.completed,
+        JSON.stringify(stats),
+        nowIso(),
+        batchId,
+      );
+      return { batchId, status: BATCH_STATUS.completed, stats };
+    } catch (err) {
+      // 原子语义：任一阶段失败都零入库，批次明确标记失败，不留 committing 悬挂态
+      this.db.run(
+        'UPDATE import_batches SET status = ?, stats = ?, finished_at = ? WHERE id = ?',
+        BATCH_STATUS.failed,
+        JSON.stringify({ total: items.length, committed: 0, failed: items.length, skipped: 0, mode: 'strict' }),
+        nowIso(),
+        batchId,
+      );
+      throw err;
+    }
   }
 
   // ---------- 查询与报告 ----------

@@ -10,6 +10,8 @@ import { AuthService } from '../auth/auth.service';
 import { getConfig } from '../config/config';
 import { MissingService, versionFromMissedFilename } from '../missing/missing.service';
 import { pickNpmMetadata } from '../packages/npm-metadata';
+import { readNpmPackageManifest } from '../packages/package-validator';
+import { normalizeName } from '../packages/names';
 import { PackagesService, type InsertVersionInput } from '../packages/packages.service';
 import { SecurityService, type GateResult } from '../security/security.service';
 import { StorageService } from '../storage/storage.service';
@@ -18,6 +20,20 @@ interface PublishAttachment {
   data?: string;
   content?: string;
   length?: number;
+}
+
+/**
+ * 估算发布请求内所有附件解码后的总字节数。
+ * express.json 会把整个 body（含 base64 文本）解析后常驻内存，若只逐个校验单文件大小，
+ * 多版本发布可让累计体积远超业务上限、放大峰值内存。base64 每 4 字符解码为 3 字节。
+ */
+export function sumPublishAttachmentBytes(attachments: Record<string, PublishAttachment>): number {
+  let total = 0;
+  for (const attachment of Object.values(attachments)) {
+    const encoded = attachment?.data || attachment?.content || '';
+    total += Math.floor(encoded.length * 3 / 4);
+  }
+  return total;
 }
 
 /**
@@ -249,6 +265,15 @@ export class RegistryNpmController {
     const basename = name.split('/').pop()!;
     const traceId = (req as Request & { traceId?: string }).traceId;
 
+    // 单请求附件总量上限（B1）：逐个校验单文件大小无法约束多版本累计，
+    // 而整个 body 已被 express.json 解析后常驻内存，累计过大会放大 OOM 风险。
+    // 上限复用单文件业务上限（字典可控），单版本发布不会误伤，只拦多版本累计超限。
+    const totalBytes = sumPublishAttachmentBytes(attachments);
+    const maxTotalBytes = getConfig().limits.maxNpmUploadBytes;
+    if (totalBytes > maxTotalBytes) {
+      throw new ApiError('UPLOAD_FILE_TOO_LARGE', { totalBytes, maxBytes: maxTotalBytes });
+    }
+
     // 查重前置到预检：多版本场景下任何一个版本重复，整个发布在扫描前就被拒绝
     for (const version of versionKeys) {
       this.packages.assertNotDuplicate('npm', name, version);
@@ -268,17 +293,18 @@ export class RegistryNpmController {
         };
         if (!semver.valid(version)) throw new ApiError('PKG_VERSION_INVALID', { version });
 
-        // 附件 key 精确匹配优先（RV-23）：npm 固定 <basename>-<version>.tgz；同一附件不允许被两个版本复用
+        // 附件 key 只接受 npm 协议约定的 <basename>-<version>.tgz（RV-23）。
+        // 不再回退到「任意以版本结尾」或「任意未消费」的 key：否则构造/异常客户端
+        // 可把 A 版本的包内容发布成 B 版本，导致元数据与二进制错配。
         const expectedKey = `${basename}-${version}.tgz`;
-        const attachmentKey =
-          attachments[expectedKey] && !consumedAttachments.has(expectedKey)
-            ? expectedKey
-            : (Object.keys(attachments).find((key) => !consumedAttachments.has(key) && key.endsWith(`${version}.tgz`)) ??
-              Object.keys(attachments).find((key) => !consumedAttachments.has(key)));
-        const attachment = attachmentKey ? attachments[attachmentKey] : undefined;
+        const attachment = attachments[expectedKey];
         const encoded = attachment?.data || attachment?.content;
-        if (!attachmentKey || !encoded) throw new ApiError('PKG_FILE_MISSING', { version });
-        consumedAttachments.add(attachmentKey);
+        if (!encoded) throw new ApiError('PKG_FILE_MISSING', { version, expectedKey });
+        // 同一附件不允许被两个版本复用（正常发布每个版本各有独立 tarball）
+        if (consumedAttachments.has(expectedKey)) {
+          throw new ApiError('PKG_FILE_MISSING', { version, expectedKey, reason: '附件已被其他版本占用' });
+        }
+        consumedAttachments.add(expectedKey);
 
         const tmpPath = path.join(
           getConfig().tmpDir,
@@ -287,13 +313,41 @@ export class RegistryNpmController {
         tmpPaths.push(tmpPath);
         await decodeBase64ToFile(encoded, tmpPath);
         // 及时断开 base64 字符串引用，让 GC 可以回收，降低峰值内存
-        delete attachments[attachmentKey];
+        delete attachments[expectedKey];
         const size = (await fsp.stat(tmpPath)).size;
         // 业务上限取自字典（可运行时调整）；HTTP body 的硬天花板由 express.json 单点把关
         const maxBytes = getConfig().limits.maxNpmUploadBytes;
         if (size > maxBytes) {
           throw new ApiError('UPLOAD_FILE_TOO_LARGE', { version, maxBytes });
         }
+
+        // 包内清单一致性（RV-23）：tarball 内的 package.json 必须与声明的 name/version 一致。
+        // 与批量导入共用 readNpmPackageManifest（含非标准顶层目录兼容），防止把 A 包内容伪装成 B 包发布。
+        let scanBuffer: Buffer | null = null;
+        try {
+          scanBuffer = await fsp.readFile(tmpPath);
+          const manifest = await readNpmPackageManifest(scanBuffer);
+          if (!manifest.name || normalizeName('npm', manifest.name) !== normalizeName('npm', name)) {
+            throw new ApiError('PKG_METADATA_MISMATCH', {
+              version,
+              field: 'name',
+              declared: name,
+              inTarball: manifest.name ?? null,
+            });
+          }
+          if (manifest.version !== version) {
+            throw new ApiError('PKG_METADATA_MISMATCH', {
+              version,
+              field: 'version',
+              declared: version,
+              inTarball: manifest.version ?? null,
+            });
+          }
+        } catch (err) {
+          if (err instanceof ApiError) throw err;
+          throw new ApiError('PKG_TARBALL_INVALID', { version, reason: (err as Error).message });
+        }
+
         const stored = await this.storage.putObjectFromFile(tmpPath);
 
         // SRI 权威校验（RV-23）：integrity 一旦声明即为唯一权威，shasum 一致也不能掩盖其不匹配
@@ -311,7 +365,8 @@ export class RegistryNpmController {
         let gate: GateResult | null = null;
         if (getConfig().security.scanEnabled) {
           try {
-            const buffer = await fsp.readFile(tmpPath);
+            // 复用清单校验时读入的 buffer，避免同一次发布重复整包读盘
+            const buffer = scanBuffer ?? (await fsp.readFile(tmpPath));
             gate = await this.security.scanAndGate({
               ecosystem: 'npm',
               name,

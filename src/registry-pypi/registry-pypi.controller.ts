@@ -180,6 +180,9 @@ export class RegistryPypiController {
       if (body[':action'] && body[':action'] !== 'file_upload') {
         throw new ApiError('SYS_VALIDATION', { field: ':action', value: body[':action'] });
       }
+      // twine 每次请求只上传一个 distribution。多余文件既不会被处理，若静默忽略则
+      // 临时文件永不清理、业务大小上限也绕过（仅 files[0] 被校验），故显式拒绝。
+      if (files.length > 1) throw new ApiError('UPLOAD_MULTIPLE_FILES', { received: files.length });
       if (!file) throw new ApiError('UPLOAD_EMPTY', { field: 'file' });
       if (!body.name || !body.version) throw new ApiError('SYS_VALIDATION', { fields: ['name', 'version'] });
       // 业务上限取自字典（可运行时调整），与 multer 的启动期硬天花板分层
@@ -244,7 +247,11 @@ export class RegistryPypiController {
 
       res.status(200).send('OK');
     } finally {
-      if (file?.path) await fsp.rm(file.path, { force: true }).catch(() => undefined);
+      // 必须清理本次请求落盘的全部临时文件，而非只删 files[0]：
+      // multer 会先把所有 multipart 文件写盘，多文件被拒绝后其余文件同样会残留。
+      for (const item of files) {
+        if (item?.path) await fsp.rm(item.path, { force: true }).catch(() => undefined);
+      }
     }
   }
 

@@ -152,31 +152,27 @@ export class PackagesService {
    * BLOCK 抛 SEC_BLOCKED、QUARANTINE 抛 SEC_QUARANTINED，调用方不得吞掉这两个错误。
    * 字典管理关闭漏洞扫描（security.scanEnabled=false）时跳过校验直接入库。
    */
-  async insertVersion(input: InsertVersionInput, options?: InsertVersionOptions): Promise<VersionRow> {
-    const normalizedVersion = this.assertNotDuplicate(input.ecosystem, input.name, input.version);
-
-    let gate: GateResult | null = null;
-    if (!options?.skipSecurityScan && getConfig().security.scanEnabled) {
-      try {
-        const buffer = await this.storage.readObject(input.sha256);
-        gate = await this.security.scanAndGate({
-          ecosystem: input.ecosystem,
-          name: input.name,
-          version: input.version,
-          filename: input.filename,
-          sha256: input.sha256,
-          sizeBytes: buffer.length,
-          source: input.source,
-          uploaderId: input.uploaderId ?? null,
-          signature: input.signature,
-          trigger: 'upload',
-          buffer,
-        });
-      } catch (err) {
-        if (err instanceof ApiError) throw err;
-        // 扫描失败按 fail-closed 处理，绝不放行未经校验的包
-        throw new ApiError('SEC_SCAN_FAILED', { reason: (err as Error).message });
-      }
+  /**
+   * 对已落对象的版本执行安全扫描闸门，返回 gate（BLOCK/QUARANTINE 直接抛错）。
+   * 抽出为公开方法，供批量导入在事务外完成异步扫描、再把 gate 交给原子写入。
+   */
+  async prepareScan(input: InsertVersionInput): Promise<GateResult | null> {
+    if (!getConfig().security.scanEnabled) return null;
+    try {
+      const buffer = await this.storage.readObject(input.sha256);
+      const gate = await this.security.scanAndGate({
+        ecosystem: input.ecosystem,
+        name: input.name,
+        version: input.version,
+        filename: input.filename,
+        sha256: input.sha256,
+        sizeBytes: buffer.length,
+        source: input.source,
+        uploaderId: input.uploaderId ?? null,
+        signature: input.signature,
+        trigger: 'upload',
+        buffer,
+      });
 
       const { disposition, verdict, score, findings } = gate.outcome;
       const payload = {
@@ -190,8 +186,17 @@ export class PackagesService {
       };
       if (disposition === 'BLOCK') throw new ApiError('SEC_BLOCKED', payload);
       if (disposition === 'QUARANTINE') throw new ApiError('SEC_QUARANTINED', payload);
+      return gate;
+    } catch (err) {
+      if (err instanceof ApiError) throw err;
+      // 扫描失败按 fail-closed 处理，绝不放行未经校验的包
+      throw new ApiError('SEC_SCAN_FAILED', { reason: (err as Error).message });
     }
+  }
 
+  async insertVersion(input: InsertVersionInput, options?: InsertVersionOptions): Promise<VersionRow> {
+    const normalizedVersion = this.assertNotDuplicate(input.ecosystem, input.name, input.version);
+    const gate = options?.skipSecurityScan ? null : await this.prepareScan(input);
     return this.insertVersionSync(input, normalizedVersion, gate);
   }
 
@@ -200,11 +205,21 @@ export class PackagesService {
    * 任一版本失败整体回滚，杜绝「前两个版本已入库、第三个失败」的半发布状态。
    * gate 允许为 null：字典管理关闭漏洞扫描时 npm publish 不产生扫描记录，直接入库。
    */
-  insertVersionsAtomic(items: { input: InsertVersionInput; gate: GateResult | null }[]): VersionRow[] {
+  insertVersionsAtomic(
+    items: { input: InsertVersionInput; gate: GateResult | null }[],
+    /** 事务内每条写入成功后回调，用于同步更新导入条目状态；抛错会随整批回滚 */
+    onInserted?: (row: VersionRow, index: number) => void,
+  ): VersionRow[] {
     return this.db.tx(() =>
-      items.map(({ input, gate }) =>
-        this.insertVersionSync(input, this.assertNotDuplicate(input.ecosystem, input.name, input.version), gate),
-      ),
+      items.map(({ input, gate }, index) => {
+        const row = this.insertVersionSync(
+          input,
+          this.assertNotDuplicate(input.ecosystem, input.name, input.version),
+          gate,
+        );
+        onInserted?.(row, index);
+        return row;
+      }),
     );
   }
 

@@ -330,4 +330,48 @@ describe('A1 批量导入与全量校验（e2e）', () => {
     const packument = await request(ctx.baseUrl).get('/npm/e2e-compat-consumer').expect(200);
     expect(packument.body.versions['1.0.0'].dependencies).toEqual(dependencies);
   });
+
+  it('strict 提交阶段任一版本重复时整批回滚，零版本入库', async () => {
+    const a = await makeNpmTarball('e2e-atomic-a', '1.0.0');
+    const b = await makeNpmTarball('e2e-atomic-b', '1.0.0');
+    const created = await request(ctx.baseUrl)
+      .post('/api/v1/import-batches/auto')
+      .auth(ADMIN.username, ADMIN.password)
+      .attach('files', a, 'e2e-atomic-a-1.0.0.tgz')
+      .attach('files', b, 'e2e-atomic-b-1.0.0.tgz')
+      .expect(201);
+    const batchId = created.body.data.batchId as string;
+
+    const validated = await request(ctx.baseUrl)
+      .post(`/api/v1/import-batches/${batchId}/validate`)
+      .auth(ADMIN.username, ADMIN.password)
+      .expect(201);
+    expect(validated.body.data.stats.valid).toBe(2);
+
+    // 校验通过后才制造重复：CLI 发布其中一条，令 strict 写入阶段 assertNotDuplicate 失败
+    await request(ctx.baseUrl)
+      .put('/npm/e2e-atomic-a')
+      .auth(ADMIN.username, ctx.npmTokens[ADMIN.username])
+      .send({
+        name: 'e2e-atomic-a',
+        versions: { '1.0.0': { version: '1.0.0' } },
+        _attachments: { 'e2e-atomic-a-1.0.0.tgz': { data: a.toString('base64') } },
+      })
+      .expect(201);
+
+    const blocked = await request(ctx.baseUrl)
+      .post(`/api/v1/import-batches/${batchId}/commit`)
+      .auth(ADMIN.username, ADMIN.password)
+      .send({ mode: 'strict' })
+      .expect(409);
+    expect(blocked.body.code).toBe('PKG_VERSION_DUPLICATE');
+
+    // 整批回滚：另一个包也没有入库
+    await request(ctx.baseUrl).get('/npm/e2e-atomic-b').expect(404);
+    const batch = await request(ctx.baseUrl)
+      .get(`/api/v1/import-batches/${batchId}`)
+      .auth(ADMIN.username, ADMIN.password)
+      .expect(200);
+    expect(batch.body.data.status).toBe('FAILED');
+  });
 });

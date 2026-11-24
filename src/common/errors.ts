@@ -72,6 +72,7 @@ export const ERROR_DEFS: Record<string, ErrorDef> = {
 
   // 上传
   UPLOAD_EMPTY: { status: 400, message: '上传内容为空' },
+  UPLOAD_MULTIPLE_FILES: { status: 400, message: '每次上传只接受一个文件' },
   UPLOAD_FILE_TOO_LARGE: { status: 413, message: '上传文件超过大小上限' },
   UPLOAD_UNSUPPORTED_TYPE: { status: 415, message: '不支持的文件类型' },
 

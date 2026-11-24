@@ -377,4 +377,34 @@ describe('npm / PyPI registry 协议（e2e）', () => {
       .expect(401);
     expect(res.body.error).toBe('AUTH_UNAUTHENTICATED');
   });
+
+  it('npm 发布：附件 key 不匹配期望名时被拒绝（不再回退到任意 key）', async () => {
+    const tarball = await makeNpmTarball('e2e-publish-bind', '1.0.0');
+    const res = await request(ctx.baseUrl)
+      .put('/npm/e2e-publish-bind')
+      .auth(ADMIN.username, ctx.npmTokens[ADMIN.username])
+      .send({
+        name: 'e2e-publish-bind',
+        versions: { '1.0.0': { version: '1.0.0' } },
+        // 错误 key：旧逻辑会回退「任意以 1.0.0.tgz 结尾」的 key 而错误放行
+        _attachments: { 'other-name-1.0.0.tgz': { data: tarball.toString('base64') } },
+      })
+      .expect(400);
+    expect(res.body.error).toBe('PKG_FILE_MISSING');
+  });
+
+  it('npm 发布：包内 name/version 与声明不一致时被拒绝', async () => {
+    // 用包名 e2e-publish-inner 构造 tarball，但声明为 e2e-publish-fake 发布
+    const tarball = await makeNpmTarball('e2e-publish-inner', '9.9.9');
+    const res = await request(ctx.baseUrl)
+      .put('/npm/e2e-publish-fake')
+      .auth(ADMIN.username, ctx.npmTokens[ADMIN.username])
+      .send({
+        name: 'e2e-publish-fake',
+        versions: { '1.0.0': { version: '1.0.0' } },
+        _attachments: { 'e2e-publish-fake-1.0.0.tgz': { data: tarball.toString('base64') } },
+      })
+      .expect(400);
+    expect(res.body.error).toBe('PKG_METADATA_MISMATCH');
+  });
 });
