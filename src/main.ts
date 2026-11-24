@@ -76,6 +76,18 @@ async function bootstrap(): Promise<void> {
 }
 
 bootstrap().catch((err) => {
+  // 端口占用是拆分部署最常见的启动失败：直接给出角色、端口与排查命令，
+  // 比只打一段 ENOTFOUND/EADDRINUSE 的 stack 更容易定位（多进程抢同一端口还会加剧 SQLite 写锁竞争）。
+  if ((err as NodeJS.ErrnoException)?.code === 'EADDRINUSE') {
+    const cfg = getConfig();
+    logger.error(
+      `端口 ${cfg.port} 已被占用（角色=${cfg.role}）：同机可能启动了重复角色，或拆分部署端口配置重复。` +
+        `请检查 PROCESS_ROLE / PORT，并用 "ss -ltnp | grep :${cfg.port}" 确认占用进程`,
+      undefined,
+      'Bootstrap',
+    );
+    process.exit(1);
+  }
   // 启动失败必须显式退出并打印原因，避免进程挂在半启动状态
   logger.error('启动失败', err instanceof Error ? err.stack : undefined, 'Bootstrap');
   process.exit(1);

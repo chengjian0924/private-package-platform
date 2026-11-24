@@ -816,7 +816,6 @@ export class SecurityService implements OnModuleInit {
       if (!(await this.isOlderThan(abs, cutoff))) continue;
       orphanObjects.push(relative);
     }
-
     const quarantineRefs = this.db
       .all<{ quarantine_path: string }>('SELECT quarantine_path FROM security_scans WHERE quarantine_path IS NOT NULL')
       .map((row) => row.quarantine_path.replace(/\\/g, '/'));
@@ -845,15 +844,25 @@ export class SecurityService implements OnModuleInit {
       .map((abs) => this.relativeKey(abs))
       .filter((key) => Array.from(expiredBatches).some((prefix) => key.startsWith(prefix)));
 
+    // 删前二次确认：扫描文件树与真正删除之间可能刚好有新上传复用同一个内容寻址对象
+    // （putObject 命中已存在文件会直接复用），只删此刻仍然无引用的，避免删掉刚入库的包。
+    // 放在 apply 分支内，预览接口保持「按扫描时刻的判定」语义不变。
+    let removableObjects = orphanObjects;
     if (apply) {
-      for (const key of [...orphanObjects, ...expiredBatchFiles]) {
+      const referencedNow = new Set(
+        this.db
+          .all<{ storage_key: string }>("SELECT DISTINCT storage_key FROM package_versions WHERE storage_key IS NOT NULL")
+          .map((row) => row.storage_key),
+      );
+      removableObjects = orphanObjects.filter((key) => !referencedNow.has(key));
+      for (const key of [...removableObjects, ...expiredBatchFiles]) {
         await fsp.rm(path.join(cfg.dataDir, key), { force: true }).catch(() => undefined);
       }
       for (const key of orphanQuarantine) {
         await fsp.rm(this.quarantineAbsolutePath(key), { recursive: true, force: true }).catch(() => undefined);
       }
       this.telemetry.record('security.orphans.swept', {
-        objects: orphanObjects.length,
+        objects: removableObjects.length,
         quarantine: orphanQuarantine.length,
         batchFiles: expiredBatchFiles.length,
       });
@@ -861,7 +870,8 @@ export class SecurityService implements OnModuleInit {
 
     return {
       applied: apply,
-      orphanObjects: { count: orphanObjects.length, sample: orphanObjects.slice(0, 20) },
+      // applied=true 时返回实际删除的集合（已剔除期间新被引用的），预览保持扫描结果
+      orphanObjects: { count: removableObjects.length, sample: removableObjects.slice(0, 20) },
       orphanQuarantine: { count: orphanQuarantine.length, sample: orphanQuarantine.slice(0, 20) },
       expiredBatchFiles: { count: expiredBatchFiles.length, sample: expiredBatchFiles.slice(0, 20) },
     };

@@ -8,6 +8,7 @@ import {
 import type { Response } from 'express';
 import { ApiError, ERROR_DEFS } from './errors';
 import type { TracedRequest } from './http.util';
+import { redactText } from './logger';
 
 /**
  * 全局异常出口：
@@ -49,9 +50,13 @@ export class AllExceptionsFilter implements ExceptionFilter {
       code = status === 401 ? 'AUTH_UNAUTHENTICATED' : status === 403 ? 'AUTH_FORBIDDEN' : 'SYS_VALIDATION';
       if (status === 404) code = 'SYS_NOT_FOUND';
       if (status === 413) code = 'UPLOAD_FILE_TOO_LARGE';
+      // 5xx 的 message 可能带内部细节（依赖库报错、路径），对外统一换成固定文案；
+      // 4xx 保留具体原因，前端表单才给得出可操作的提示。
+      if (status >= 500) message = ERROR_DEFS.SYS_INTERNAL.message;
     } else if (exception instanceof Error) {
       message = ERROR_DEFS.SYS_INTERNAL.message;
-      this.logger.error(`[${traceId}] ${path} ${exception.message}`, exception.stack);
+      // message 是拼接后的纯文本，maskDeep 按 key 脱敏覆盖不到，单独做字符串级脱敏
+      this.logger.error(`[${traceId}] ${path} ${redactText(exception.message)}`, redactText(exception.stack || ''));
     }
 
     if (status >= 500) {
@@ -64,6 +69,9 @@ export class AllExceptionsFilter implements ExceptionFilter {
     }
 
     if (path.startsWith('/npm') || path.startsWith('/pypi')) {
+      // 401 必须带 WWW-Authenticate，npm/twine 才会按标准流程提示重新输入凭据；
+      // 只加在 registry 路径上，控制台是 Cookie 会话，加了会弹浏览器原生登录框。
+      if (status === 401) res.setHeader('WWW-Authenticate', 'Basic realm="yuanjian-registry"');
       // registry 客户端只需要 error/reason；额外透出拦截明细，上传者才能自助整改
       const extra = details && typeof details === 'object' ? (details as Record<string, unknown>) : {};
       res.status(status).json({

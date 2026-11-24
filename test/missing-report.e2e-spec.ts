@@ -161,4 +161,37 @@ describe('缺包自动上报与显式上报（e2e）', () => {
     const items = await listMissing(ctx, '?source=registry');
     expect(items.find((item) => item.normalized_name === 'e2e-plain-404')).toBeTruthy();
   });
+
+  it('包存在但唯一版本被删除：404 用「无可用版本」错误码，不登记缺包', async () => {
+    const name = 'e2e-soft-deleted-only';
+    const tarball = await makeNpmTarball(name, '1.0.0');
+    await request(ctx.baseUrl)
+      .put(`/npm/${name}`)
+      .auth(ADMIN.username, ctx.npmTokens[ADMIN.username])
+      .send({
+        _id: name,
+        name,
+        'dist-tags': { latest: '1.0.0' },
+        versions: { '1.0.0': { name, version: '1.0.0', dist: {} } },
+        _attachments: { [`${name}-1.0.0.tgz`]: { data: tarball.toString('base64'), length: tarball.length } },
+      })
+      .expect(201);
+
+    const detail = await request(ctx.baseUrl)
+      .get(`/api/v1/packages/detail?${new URLSearchParams({ ecosystem: 'npm', name }).toString()}`)
+      .auth(ADMIN.username, ADMIN.password)
+      .expect(200);
+    const versionId = (detail.body.data.versions as { id: string }[])[0].id;
+    await request(ctx.baseUrl)
+      .delete(`/api/v1/packages/versions/${versionId}`)
+      .auth(ADMIN.username, ADMIN.password)
+      .expect(200);
+
+    // 客户端仍拿到 404（确实装不了），但错误码区分「包不存在」与「包在、没可用版本」
+    const res = await request(ctx.baseUrl).get(`/npm/${name}`).expect(404);
+    expect(res.body.error).toBe('PKG_NO_AVAILABLE_VERSION');
+
+    const items = await listMissing(ctx, '?source=registry');
+    expect(items.find((item) => item.normalized_name === name)).toBeFalsy();
+  });
 });

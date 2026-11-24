@@ -179,9 +179,9 @@ npm run start:test# 测试环境：http://localhost:3100，数据目录 data/tes
 | `LOG_LEVEL` | `debug` | `warn` | 日志级别；生产默认 `info`（B2） |
 | `LOG_FORMAT` | `text` | `json` | 输出格式；生产默认 `json` 单行（B2） |
 | `METRICS_TOKEN` | 空 | 空 | `/metrics` 抓取令牌；设置后须带 `Authorization: Bearer <token>`（定长比较防时序推断），**留空则该端点匿名可读、无身份校验**，生产必须设置（B3） |
-| `RATE_LIMIT_ENABLED` | `true` | `false` | 限流总开关（B4）。**可在控制台「字典管理」中运行时覆盖** |
-| `RATE_LIMIT_WINDOW_MS` | `60000` | 同左 | 限流窗口（毫秒）。**可在控制台「字典管理」中运行时覆盖** |
-| `RATE_LIMIT_AUTH_MAX` | `10` | 同左 | 认证类路由窗口内上限。**可在控制台「字典管理」中运行时覆盖** |
+| `RATE_LIMIT_ENABLED` | `true` | `false` | 限流总开关（B4）。**关闭限流只认这个开关**：`*_MAX` 填 0 或不合法会在启动时报错，不会被静默当成「不限流」。**可在控制台「字典管理」中运行时覆盖** |
+| `RATE_LIMIT_WINDOW_MS` | `60000` | 同左 | 限流窗口（毫秒），必须 ≥ 1。运行时改窗口后，下一次请求即按新窗口重新计数。**可在控制台「字典管理」中运行时覆盖** |
+| `RATE_LIMIT_AUTH_MAX` | `10` | 同左 | 认证类路由窗口内上限，必须 ≥ 1。登录路径按尾斜杠归一化与 method 大小写归一处理，加 `/` 或小写 `post` 不能绕过此桶。**可在控制台「字典管理」中运行时覆盖** |
 | `RATE_LIMIT_WRITE_MAX` | `60` | 同左 | 写类路由窗口内上限。**可在控制台「字典管理」中运行时覆盖** |
 | `RATE_LIMIT_READ_MAX` | `600` | 同左 | 控制台 API 等读类路由窗口内上限；registry 协议请求不计入此桶。**可在控制台「字典管理」中运行时覆盖** |
 | `RATE_LIMIT_REGISTRY_MAX` | `20000` | 同左 | `/npm/*`、`/pypi/*` 协议 GET/HEAD 的独立上限（npm 与 pypi 分开计数），避免 dshmarket / pip / npm 批量拉取触发 429。**可在控制台「字典管理」中运行时覆盖** |
@@ -195,6 +195,13 @@ npm run start:test# 测试环境：http://localhost:3100，数据目录 data/tes
 | `BACKUP_DIR` | `<DATA_DIR>/backups` | 同左 | 备份目录，目录结构与 `objects/` 同构（`<sha 前 2 位>/<sha256>`）；不能与 `objects/` 相同 |
 | `BACKUP_HEARTBEAT_MS` | `60000` | `0` | 调度心跳（毫秒）：决定改完字典多久按新间隔执行；`<=0` 关闭调度（测试用） |
 | `MISSING_AUTO_REPORT` | `true` | `true` | 下游拉取包失败（registry 404）时是否自动登记缺失依赖。**可在控制台「字典管理 → 缺包自动上报」中运行时覆盖**；关闭只停新增，已有记录保留，不影响显式上报接口 |
+
+限流与 registry 交互约定：
+
+- 所有响应都带 `RateLimit-Limit` / `RateLimit-Remaining` / `RateLimit-Reset` / `RateLimit-Policy`，被拒（429）时额外带 `Retry-After`，客户端可据此主动退避。
+- `/npm`、`/pypi` 的 401 额外带 `WWW-Authenticate: Basic realm="yuanjian-registry"`，npm / twine 才会走标准凭据提示流程；控制台是 Cookie 会话，不下发该头以免弹浏览器原生登录框。
+- PyPI simple 项目页对已知 `requires_python` 的构件输出 `data-requires-python`（PEP 503 可选属性），pip 在解析阶段即可过滤不兼容版本，不必先下载再拒绝。
+- 「包存在但唯一版本被删除/隔离」时 packument 返回 404 `PKG_NO_AVAILABLE_VERSION`，与「包不存在」区分，不登记为缺失依赖。
 
 时钟（B5 收敛后只保留 SNTP 观测）：
 

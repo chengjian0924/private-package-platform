@@ -8,8 +8,9 @@ export type DbRow = Record<string, unknown>;
 
 const SCHEMA = `
 PRAGMA journal_mode = WAL;
--- 多进程共享同一库文件时，写锁冲突等待而不是立即抛 SQLITE_BUSY
-PRAGMA busy_timeout = 5000;
+-- busy_timeout 统一在 onModuleInit 里于 SCHEMA 之前设置（10s）。
+-- 这里不能再写一次，否则会把它覆盖成更小的值：三进程共享一个库时，
+-- 长事务并发下 5s 更容易提前 SQLITE_BUSY。
 PRAGMA foreign_keys = ON;
 
 CREATE TABLE IF NOT EXISTS users (

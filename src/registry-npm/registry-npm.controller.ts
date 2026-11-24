@@ -192,10 +192,15 @@ export class RegistryNpmController {
     const username = (body.name || sub.replace('/-/user/org.couchdb.user:', '')).replace(/^org\.couchdb\.user:/, '');
     if (!username || !body.password) throw new ApiError('AUTH_UNAUTHENTICATED', { reason: 'missing_credentials' });
 
-    const user =
-      (await this.auth.verifyBasicCredentials(username, body.password)) ??
-      this.auth.resolveApiToken(body.password);
-    if (!user) throw new ApiError('AUTH_TOKEN_INVALID');
+    const detailed = await this.auth.verifyBasicCredentialsDetailed(username, body.password);
+    // 第二段也可能是 API 令牌（npm login 支持直接贴 token）
+    const user = detailed.user ?? this.auth.resolveApiToken(body.password);
+    if (!user) {
+      // 锁定/禁用/机器账号要透出真实原因：npm CLI 只能显示错误文本，
+      // 一律回「令牌无效」会让用户以为凭据错了，实际是被锁定或该用令牌。
+      if (detailed.error && detailed.error.code !== 'AUTH_INVALID_CREDENTIALS') throw detailed.error;
+      throw new ApiError('AUTH_TOKEN_INVALID');
+    }
     // 首登未改密的账号不发放 CLI 令牌，避免绕过 Web 端强制改密
     if (user.mustChangePassword) throw new ApiError('AUTH_PASSWORD_CHANGE_REQUIRED');
 

@@ -105,6 +105,17 @@ function safeJson<T>(raw: string | null, fallback: T): T {
   }
 }
 
+/**
+ * 批次条目对外展示的失败原因。
+ * ApiError 的 message 来自 ERROR_DEFS 固定文案，可以安全返回；
+ * 其余异常（fs/sqlite/底层库）的 message 常含服务器绝对路径或内部细节，
+ * 统一换成通用文案，原始信息只写服务端日志。
+ */
+function publicIssueMessage(err: unknown): string {
+  if (err instanceof ApiError) return err.message;
+  return '处理失败，详情见服务端日志';
+}
+
 @Injectable()
 export class ImportService {
   private readonly logger = new Logger('Import');
@@ -585,10 +596,15 @@ export class ImportService {
       } catch (err) {
         failed++;
         const reason = err instanceof ApiError ? err.code : 'SYS_INTERNAL';
+        // 对外只给错误码 + 固定文案：底层异常（如 fsp.readFile 失败）的 message 含服务器绝对路径，
+        // 直接写进 issues 会随批次报告返回给有 import:run 权限的用户。原始信息只落服务端日志。
+        this.logger.warn(
+          `批次 ${batchId} 条目 ${item.id} 入库失败: ${err instanceof Error ? err.message : String(err)}`,
+        );
         const detailNext: ItemDetail = { ...detail, issues: [...(detail.issues || []), {
           code: reason,
           severity: 'error',
-          message: err instanceof Error ? err.message : String(err),
+          message: publicIssueMessage(err),
         }] };
         this.db.run(
           "UPDATE import_batch_items SET status = 'FAILED', reason_codes = ?, detail = ? WHERE id = ?",

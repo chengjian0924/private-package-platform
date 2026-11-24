@@ -48,6 +48,12 @@ function parseTokenTtl(raw: unknown): number | undefined {
   return Math.round(days);
 }
 
+/**
+ * 审计里的令牌标识只留前 8 位：完整 token_hash 是吊销接口的路径参数，
+ * 随审计导出扩散等于把「可重放的吊销凭据」写进日志，没必要。
+ */
+const shortTokenId = (hash: string) => `token:${hash.slice(0, 8)}`;
+
 @Controller()
 export class AuthController {
   constructor(
@@ -447,7 +453,7 @@ export class AuthController {
         actorId: req.user!.id,
         action: 'auth.token.revoke',
         resourceType: 'api_token',
-        resourceId: hash,
+        resourceId: shortTokenId(hash),
         result: 'success',
         ip: clientIp(req),
         detail: { scope: 'self' },
@@ -465,7 +471,7 @@ export class AuthController {
       actorId: req.user!.id,
       action: 'auth.token.revoke',
       resourceType: 'api_token',
-      resourceId: hash,
+      resourceId: shortTokenId(hash),
       result: 'success',
       ip: clientIp(req),
       detail: { scope: 'other', targetUserId: owner.userId, targetUsername: owner.username },

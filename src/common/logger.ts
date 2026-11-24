@@ -51,6 +51,19 @@ export function maskDeep(value: unknown, depth = 0): unknown {
   return value;
 }
 
+/**
+ * 字符串级脱敏：maskDeep 按「键名」脱敏，管不到已经拼成一句话的 message
+ * （例如底层 HTTP 客户端抛出的 `... Authorization: Bearer xxx` 或 `?token=xxx`）。
+ * 这里对常见凭据形态做替换，供异常日志等纯文本场景使用。
+ */
+export function redactText(text: string): string {
+  return text
+    // 只认「Basic/Bearer + 至少 8 位的凭据」，避免把 "basic auth" 这类普通措辞当成凭据
+    .replace(/\b(Bearer|Basic)\s+(?!auth\b)[A-Za-z0-9._~+/=-]{8,}/gi, '$1 ***')
+    .replace(/([?&](?:token|access_token|password|passwd|secret|signature|api[-_]?key)=)[^&\s"']+/gi, '$1***')
+    .replace(/(\/\/)[^/\s:@]+:[^/\s@]+@/g, '$1***@');
+}
+
 function normalizeMessage(message: unknown): string {
   if (typeof message === 'string') return message;
   if (message instanceof Error) return message.message;

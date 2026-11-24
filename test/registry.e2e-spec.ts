@@ -376,6 +376,8 @@ describe('npm / PyPI registry 协议（e2e）', () => {
       .send({ name: 'e2e-anonymous', versions: { '1.0.0': {} }, _attachments: {} })
       .expect(401);
     expect(res.body.error).toBe('AUTH_UNAUTHENTICATED');
+    // 401 必须带 WWW-Authenticate，npm/twine 才会按标准流程提示输入凭据
+    expect(res.headers['www-authenticate']).toContain('Basic realm=');
   });
 
   it('npm 发布：附件 key 不匹配期望名时被拒绝（不再回退到任意 key）', async () => {

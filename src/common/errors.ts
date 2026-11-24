@@ -41,6 +41,9 @@ export const ERROR_DEFS: Record<string, ErrorDef> = {
 
   // 包与版本
   PKG_NOT_FOUND: { status: 404, message: '依赖包不存在' },
+  // 与 PKG_NOT_FOUND 区分：包本身在、只是没有 active 版本（全部隔离或已删除）。
+  // 客户端同样收 404，但缺包上报不能再登记——否则待补列表会被「有包只是不可用」污染。
+  PKG_NO_AVAILABLE_VERSION: { status: 404, message: '该包存在，但没有可用版本' },
   PKG_NAME_INVALID: { status: 400, message: '包名不合法' },
   PKG_VERSION_INVALID: { status: 400, message: '版本号不合法' },
   PKG_VERSION_DUPLICATE: { status: 409, message: '该版本已存在' },

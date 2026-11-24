@@ -109,8 +109,10 @@ describe('令牌可见范围：管理员全量、普通用户仅自己（e2e）'
 
     const rows = (await admin.get('/api/v1/audit-logs').query({ action: 'auth.token.revoke' }).expect(200)).body.data
       .items as Record<string, unknown>[];
-    const self = rows.find((r) => r.resource_id === ownHash);
-    const other = rows.find((r) => r.resource_id === readerTokenHash);
+    // 审计用短标识（token:前8位），完整 token_hash 不落审计避免扩散可重放的吊销参数
+    const shortId = (hash: string) => `token:${hash.slice(0, 8)}`;
+    const self = rows.find((r) => r.resource_id === shortId(ownHash));
+    const other = rows.find((r) => r.resource_id === shortId(readerTokenHash));
     expect((self?.detail as Record<string, unknown>)?.scope).toBe('self');
     expect((other?.detail as Record<string, unknown>)?.scope).toBe('other');
     expect((other?.detail as Record<string, unknown>)?.targetUsername).toBe(READER.username);

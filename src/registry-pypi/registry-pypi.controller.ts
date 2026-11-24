@@ -36,6 +36,20 @@ function diskTmpStorage() {
 }
 
 /**
+ * 从入库 metadata 里取 requires_python。
+ * 解析失败按「无约束」处理：索引页宁可少一个可选属性，也不能因为脏数据整页 500。
+ */
+function requiresPythonOf(raw: string | null): string {
+  if (!raw) return '';
+  try {
+    const meta = JSON.parse(raw) as { requiresPython?: unknown };
+    return typeof meta.requiresPython === 'string' ? meta.requiresPython.trim() : '';
+  } catch {
+    return '';
+  }
+}
+
+/**
  * PyPI 兼容接口：PEP 503 Simple API + twine legacy 上传。
  * pip 安装走 /pypi/simple/，twine 上传走 /pypi/legacy/。
  */
@@ -147,10 +161,14 @@ export class RegistryPypiController {
     if (!pkg) throw new ApiError('PKG_NOT_FOUND', { name });
     const versions = this.packages.versionsOf(pkg.id);
     const links = versions
-      .map(
-        (v) =>
-          `<a href="/pypi/packages/${encodeURIComponent(v.filename)}#sha256=${v.sha256}">${this.escape(v.filename)}</a><br/>`,
-      )
+      .map((v) => {
+        // PEP 503 可选属性：把入库时记录的 requires_python 透到索引上。
+        // pip 在解析阶段就能过滤掉不兼容构件，不必先下载再报错，省带宽也省限流配额。
+        // 隔离/下架版本本来就不在 versionsOf（仅 active），无需 data-yanked。
+        const requires = requiresPythonOf(v.metadata);
+        const attr = requires ? ` data-requires-python="${this.escape(requires)}"` : '';
+        return `<a href="/pypi/packages/${encodeURIComponent(v.filename)}#sha256=${v.sha256}"${attr}>${this.escape(v.filename)}</a><br/>`;
+      })
       .join('\n');
     return `<!doctype html><html><head><meta charset="utf-8"><title>Links for ${this.escape(
       pkg.normalized_name,

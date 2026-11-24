@@ -498,16 +498,35 @@ function buildConfig(): void {
       autoReport: boolEnv('MISSING_AUTO_REPORT', true),
     },
     // 测试环境默认关闭，避免用例之间共享计数导致误报；需要时显式打开
-    rateLimit: {
-      enabled: boolEnv('RATE_LIMIT_ENABLED', envName !== 'test'),
-      windowMs: intEnv('RATE_LIMIT_WINDOW_MS', 60_000),
-      authMax: intEnv('RATE_LIMIT_AUTH_MAX', 10),
-      writeMax: intEnv('RATE_LIMIT_WRITE_MAX', 60),
-      readMax: intEnv('RATE_LIMIT_READ_MAX', 600),
+    rateLimit: (() => {
+      const enabled = boolEnv('RATE_LIMIT_ENABLED', envName !== 'test');
+      const windowMs = intEnv('RATE_LIMIT_WINDOW_MS', 60_000);
+      const authMax = intEnv('RATE_LIMIT_AUTH_MAX', 10);
+      const writeMax = intEnv('RATE_LIMIT_WRITE_MAX', 60);
+      const readMax = intEnv('RATE_LIMIT_READ_MAX', 600);
       // dshmarket/pip/npm 会按依赖逐个拉 simple/packument/tarball，默认给高配额；
       // 与控制台 API 的 readMax 分桶，避免批量安装把自己的额度打满后误判“不是 registry”
-      registryMax: intEnv('RATE_LIMIT_REGISTRY_MAX', 20_000),
-    },
+      const registryMax = intEnv('RATE_LIMIT_REGISTRY_MAX', 20_000);
+
+      // 关闭限流只认 RATE_LIMIT_ENABLED 一个开关。*_MAX 填 0 曾经被计费函数当成
+      // 「不限流」静默放行，与字典项最小 1 的口径冲突，运维误填会无声关掉防护，
+      // 所以启用状态下显式拒绝非正数，避免两套关闭语义并存。
+      if (enabled) {
+        for (const [name, value] of [
+          ['RATE_LIMIT_WINDOW_MS', windowMs],
+          ['RATE_LIMIT_AUTH_MAX', authMax],
+          ['RATE_LIMIT_WRITE_MAX', writeMax],
+          ['RATE_LIMIT_READ_MAX', readMax],
+          ['RATE_LIMIT_REGISTRY_MAX', registryMax],
+        ] as const) {
+          if (!Number.isFinite(value) || value < 1) {
+            throw new Error(`${name}=${value} 不合法：必须 ≥ 1；如需关闭限流请设 RATE_LIMIT_ENABLED=false`);
+          }
+        }
+      }
+
+      return { enabled, windowMs, authMax, writeMax, readMax, registryMax };
+    })(),
     storage: {
       diskAlertPercent,
       diskReadonlyPercent,

@@ -40,6 +40,8 @@ describe('F1 通用 PyPI 仓库：任意 Python 版本 wheel 全链路（e2e）'
     expect(index.text).toContain(name);
     const project = await request(ctx.baseUrl).get(`/pypi/simple/${name}/`).expect(200);
     expect(project.text).toContain(filename);
+    // PEP 503 可选属性：pip 靠它在解析阶段过滤不兼容构件（HTML 属性值里的 > 会被转义）
+    expect(project.text).toContain('data-requires-python="&gt;=3.15"');
     const dl = await request(ctx.baseUrl).get(`/pypi/packages/${filename}`).expect(200);
     expect(Number(dl.headers['content-length'])).toBe(wheel.length);
   });

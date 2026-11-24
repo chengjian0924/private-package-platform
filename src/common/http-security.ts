@@ -40,6 +40,8 @@ type Scope = 'auth' | 'write' | 'read' | 'npm' | 'pypi';
 interface Window {
   count: number;
   resetAt: number;
+  /** 建窗时的窗口长度：运行时改 RATE_LIMIT_WINDOW_MS 后，旧窗口要按新长度重建 */
+  size: number;
 }
 
 const windows = new Map<string, Window>();
@@ -59,6 +61,19 @@ export function resetRateLimitState(): void {
 const AUTH_SCOPED_PATHS = new Set(['/api/v1/auth/login', '/api/v1/auth/change-password', '/auth/login']);
 
 /**
+ * 路径归一化，与 Express 的路由匹配口径对齐：
+ * - 末尾斜杠：Express 默认非严格路由，`/api/v1/auth/login/` 与无斜杠命中同一处理函数；
+ * - 大小写：路由本身大小写不敏感（本中间件此前已对 path 做 toLowerCase）。
+ * 不归一化的话，攻击者加个 `/` 就能把登录从 auth 桶（10 次/分钟）漏到 write 桶（60 次/分钟）。
+ */
+export function normalizeRequestPath(raw: string): string {
+  const lower = (raw || '').toLowerCase();
+  if (lower.length <= 1) return lower;
+  const trimmed = lower.replace(/\/+$/, '');
+  return trimmed || '/';
+}
+
+/**
  * registry 协议入口（/npm/*、/pypi/*）由包管理器批量拉取：
  * dshmarket 打开一次市场页会发约 400 个 search/catalog GET，
  * pip/npm 批量安装也会为每个依赖拉 simple 页面/packument 与 tarball。
@@ -66,46 +81,49 @@ const AUTH_SCOPED_PATHS = new Set(['/api/v1/auth/login', '/api/v1/auth/change-pa
  * 因此 GET/HEAD 按协议拆成 npm/pypi 独立桶，写请求仍走 writeMax。
  */
 export function rateLimitScopeOf(req: Request): Scope {
-  const path = (req.path || '').toLowerCase();
+  const path = normalizeRequestPath(req.path);
   if (AUTH_SCOPED_PATHS.has(path)) return 'auth';
 
+  // method 统一大写：Node 保证标准 method 是大写，但代理/自研客户端可能下发小写，
+  // 而 Express 路由对 method 大小写不敏感——小写 post 打登录同样能成功，限流层必须同口径。
+  const method = (req.method || '').toUpperCase();
   const registry: Exclude<Scope, 'auth' | 'write' | 'read'> | null =
     path === '/npm' || path.startsWith('/npm/')
       ? 'npm'
       : path === '/pypi' || path.startsWith('/pypi/')
         ? 'pypi'
         : null;
-  if (registry && (req.method === 'GET' || req.method === 'HEAD')) return registry;
+  if (registry && (method === 'GET' || method === 'HEAD')) return registry;
 
-  if (req.method === 'GET' || req.method === 'HEAD') return 'read';
+  if (method === 'GET' || method === 'HEAD') return 'read';
   return 'write';
 }
 
-/** 固定窗口计数；返回是否放行与建议重试秒数 */
+/** 固定窗口计数；返回是否放行、建议重试秒数与窗口剩余秒数 */
 export function checkRateLimit(
   key: string,
   limit: number,
   windowMs: number,
   now = Date.now(),
-): { allowed: boolean; retryAfter: number; remaining: number } {
-  if (limit <= 0 || windowMs <= 0) return { allowed: true, retryAfter: 0, remaining: limit };
+): { allowed: boolean; retryAfter: number; remaining: number; resetIn: number } {
+  if (limit <= 0 || windowMs <= 0) return { allowed: true, retryAfter: 0, remaining: limit, resetIn: 0 };
 
   const current = windows.get(key);
-  if (!current || current.resetAt <= now) {
+  // size 不一致说明窗口长度被运行时改过（字典热更新）：旧计数按旧窗口算，
+  // 继续沿用会让新配置要等一整个旧窗口才生效，这里直接按新长度重建。
+  if (!current || current.resetAt <= now || current.size !== windowMs) {
     if (windows.size >= MAX_TRACKED_KEYS) prune(now);
-    windows.set(key, { count: 1, resetAt: now + windowMs });
-    return { allowed: true, retryAfter: 0, remaining: limit - 1 };
+    const resetAt = now + windowMs;
+    windows.set(key, { count: 1, resetAt, size: windowMs });
+    return { allowed: true, retryAfter: 0, remaining: limit - 1, resetIn: Math.ceil(windowMs / 1000) };
   }
 
   current.count += 1;
+  const resetIn = Math.max(1, Math.ceil((current.resetAt - now) / 1000));
   if (current.count > limit) {
-    return {
-      allowed: false,
-      retryAfter: Math.max(1, Math.ceil((current.resetAt - now) / 1000)),
-      remaining: 0,
-    };
+    return { allowed: false, retryAfter: resetIn, remaining: 0, resetIn };
   }
-  return { allowed: true, retryAfter: 0, remaining: limit - current.count };
+  return { allowed: true, retryAfter: 0, remaining: limit - current.count, resetIn };
 }
 
 /** 仅清理已过期窗口；仍有大量未过期键时保持现状，避免误清除正在计数的来源 */
@@ -140,6 +158,13 @@ export function rateLimit(req: Request, res: Response, next: NextFunction): void
   const key = `${scope}:${clientIp(req) || 'unknown'}`;
   const result = checkRateLimit(key, limit, cfg.windowMs);
 
+  // RateLimit-* 采用 IETF 草案口径；成功与 429 都下发，客户端才能按剩余额度主动退避，
+  // 而不是等到被拒后才凭感觉重试。resetIn 是距窗口重置的秒数。
+  res.setHeader('RateLimit-Limit', String(limit));
+  res.setHeader('RateLimit-Policy', `${scope};q=${limit};w=${Math.max(1, Math.ceil(cfg.windowMs / 1000))}`);
+  res.setHeader('RateLimit-Remaining', String(result.remaining));
+  res.setHeader('RateLimit-Reset', String(result.resetIn));
+
   if (!result.allowed) {
     res.setHeader('Retry-After', String(result.retryAfter));
     res.status(429).json({
@@ -151,7 +176,5 @@ export function rateLimit(req: Request, res: Response, next: NextFunction): void
     return;
   }
 
-  res.setHeader('RateLimit-Limit', String(limit));
-  res.setHeader('RateLimit-Remaining', String(result.remaining));
   next();
 }

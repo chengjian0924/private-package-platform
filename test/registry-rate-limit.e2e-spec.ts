@@ -56,6 +56,11 @@ describe('registry 独立限流（e2e）', () => {
     await request(ctx.baseUrl).get('/npm/-/ping').expect(200);
     const npmBlocked = await request(ctx.baseUrl).get('/npm/-/ping').expect(429);
     expect(npmBlocked.headers['retry-after']).toBeTruthy();
+    // 429 也必须带 RateLimit-*：客户端据此判断额度与重置时间，而不是只看到 Retry-After
+    expect(npmBlocked.headers['ratelimit-limit']).toBe('2');
+    expect(npmBlocked.headers['ratelimit-remaining']).toBe('0');
+    expect(Number(npmBlocked.headers['ratelimit-reset'])).toBeGreaterThan(0);
+    expect(npmBlocked.headers['ratelimit-policy']).toBe('npm;q=2;w=60');
 
     // pypi 不受 npm 桶影响，同样独立计数
     const simple = await request(ctx.baseUrl).get('/pypi/simple/').expect(200);
@@ -63,8 +68,15 @@ describe('registry 独立限流（e2e）', () => {
     await request(ctx.baseUrl).get('/pypi/simple/').expect(200);
     await request(ctx.baseUrl).get('/pypi/simple/').expect(429);
 
-    // registry 请求不会清空/补充 read 桶：控制台依旧被限
-    await request(ctx.baseUrl).get('/api/v1/health').expect(429);
+    // 交叉验证分桶隔离：重置后用满 npm 桶，控制台 read 桶此时应仍是满额（只被本次消耗 1 次）。
+    // 若 registry 与控制台共享计数，这里的 remaining 会直接是 0/被拒，而不是 1。
+    resetRateLimitState();
+    await request(ctx.baseUrl).get('/npm/-/ping').expect(200);
+    await request(ctx.baseUrl).get('/npm/-/ping').expect(200);
+    await request(ctx.baseUrl).get('/npm/-/ping').expect(429);
+    const readAfter = await request(ctx.baseUrl).get('/api/v1/health').expect(200);
+    expect(readAfter.headers['ratelimit-limit']).toBe('2');
+    expect(readAfter.headers['ratelimit-remaining']).toBe('1');
   });
 
   it('direct 形态忽略伪造 X-Forwarded-For，所有客户端仍按真实对端共用同一限流桶', async () => {

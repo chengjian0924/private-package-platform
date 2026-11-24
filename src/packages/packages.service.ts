@@ -651,7 +651,9 @@ export class PackagesService {
     const pkg = this.findPackage('npm', name);
     if (!pkg) throw new ApiError('PKG_NOT_FOUND', { name });
     const rows = this.versionsOf(pkg.id);
-    if (rows.length === 0) throw new ApiError('PKG_NOT_FOUND', { name });
+    // 包壳在但没有 active 版本（全部隔离或软删）：语义是「暂时不可用」而非「缺包」，
+    // 用独立错误码让 registry 层跳过缺包上报，避免待补列表出现假阳性。
+    if (rows.length === 0) throw new ApiError('PKG_NO_AVAILABLE_VERSION', { name });
 
     const versions: Record<string, unknown> = {};
     const time: Record<string, string> = { created: pkg.created_at, modified: pkg.created_at };

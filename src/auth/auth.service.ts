@@ -187,7 +187,12 @@ export class AuthService {
       await verifyPassword(password, FAKE_HASH);
       throw new ApiError('AUTH_INVALID_CREDENTIALS');
     }
-    if (row.status !== 'active') throw new ApiError('AUTH_USER_DISABLED');
+    // 禁用/服务账号同样走一次假的哈希校验：否则响应时间明显短于「口令错误」，
+    // 攻击者可据此枚举哪些用户名存在且被禁用（时序侧信道）。
+    if (row.status !== 'active') {
+      await verifyPassword(password, FAKE_HASH);
+      throw new ApiError('AUTH_USER_DISABLED');
+    }
     // 机器账号不发已知口令，只接受 API 令牌；口令登录一律拒绝，避免初始口令被拿去接管 CI 身份
     if (toAccountType(row.account_type) === 'service') {
       await verifyPassword(password, FAKE_HASH);
@@ -202,8 +207,17 @@ export class AuthService {
     }
 
     if (!(await verifyPassword(password, row.password_hash))) {
-      const attempts = (row.failed_attempts || 0) + 1;
+      // 原子自增后再回读：先 SELECT 再写回在并发爆破时会丢失计数（多个请求读到同一旧值），
+      // 让锁定阈值被推迟。SQLite 单语句 UPDATE 是原子的，回读拿到的就是真实累计值。
       const nowStr = nowIso();
+      this.db.run(
+        'UPDATE users SET failed_attempts = failed_attempts + 1, updated_at = ? WHERE id = ?',
+        nowStr,
+        row.id,
+      );
+      const attempts =
+        this.db.get<{ failed_attempts: number }>('SELECT failed_attempts FROM users WHERE id = ?', row.id)
+          ?.failed_attempts ?? 1;
       if (attempts >= cfg.auth.loginMaxFailures) {
         const until = new Date(now + cfg.auth.loginLockMinutes * 60_000).toISOString();
         this.db.run(
@@ -215,7 +229,6 @@ export class AuthService {
         this.logger.warn(`账号临时锁定 ${cfg.auth.loginLockMinutes} 分钟: ${row.username}`);
         throw new ApiError('AUTH_ACCOUNT_LOCKED', { retryAfterSec: cfg.auth.loginLockMinutes * 60 });
       }
-      this.db.run('UPDATE users SET failed_attempts = ?, updated_at = ? WHERE id = ?', attempts, nowStr, row.id);
       throw new ApiError('AUTH_INVALID_CREDENTIALS', { remainingAttempts: cfg.auth.loginMaxFailures - attempts });
     }
 
@@ -241,12 +254,29 @@ export class AuthService {
     return { user, ...session };
   }
 
-  /** registry（npm/twine）Basic 认证：只返回能否通过，错误语义交给各协议的响应体 */
+  /**
+   * registry（npm/twine）Basic 认证：只返回能否通过，错误语义交给各协议的响应体。
+   * 需要区分「凭据错误 / 账号禁用 / 已锁定」时用 verifyBasicCredentialsDetailed。
+   */
   async verifyBasicCredentials(username: string, password: string): Promise<AuthUser | null> {
+    return (await this.verifyBasicCredentialsDetailed(username, password)).user;
+  }
+
+  /**
+   * 带错误语义的 Basic 认证。registry 客户端（npm login）需要告诉用户「账号被锁定/禁用」，
+   * 而不是一律回「令牌无效」——否则只能靠人工猜，也无法按 Retry-After 重试。
+   */
+  async verifyBasicCredentialsDetailed(
+    username: string,
+    password: string,
+  ): Promise<{ user: AuthUser | null; error: ApiError | null }> {
     try {
-      return toAuthUser(await this.authenticate(username, password));
-    } catch {
-      return null;
+      return { user: toAuthUser(await this.authenticate(username, password)), error: null };
+    } catch (err) {
+      return {
+        user: null,
+        error: err instanceof ApiError ? err : new ApiError('AUTH_INVALID_CREDENTIALS'),
+      };
     }
   }
 

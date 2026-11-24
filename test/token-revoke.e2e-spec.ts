@@ -126,4 +126,19 @@ describe('令牌吊销语义：禁用与作废的边界（e2e）', () => {
     expect(counts).toContain(2);
     expect(counts).toContain(0);
   });
+
+  it('单令牌吊销的审计只留短标识，导出里不含完整 token_hash', async () => {
+    await admin.post(`/api/v1/users/${serviceId}/tokens`).send({ name: 'ci-audit' }).expect(201);
+    const list = await admin.get('/api/v1/auth/tokens').query({ scope: 'all' }).expect(200);
+    const target = (list.body.data.items as { name: string; token_hash: string }[]).find((t) => t.name === 'ci-audit');
+    expect(target).toBeTruthy();
+
+    await admin.post(`/api/v1/auth/tokens/${target!.token_hash}/revoke`).expect(201);
+
+    const logs = await admin.get('/api/v1/audit-logs').query({ action: 'auth.token.revoke' }).expect(200);
+    const rows = logs.body.data.items as { resource_id: string }[];
+    // 完整哈希是吊销接口的路径参数，写进审计等于留一份可重放的凭据
+    expect(rows.some((row) => row.resource_id === target!.token_hash)).toBe(false);
+    expect(rows.some((row) => row.resource_id === `token:${target!.token_hash.slice(0, 8)}`)).toBe(true);
+  });
 });

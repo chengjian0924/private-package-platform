@@ -25,7 +25,7 @@ describe('接口限流（单元）', () => {
     expect(checkRateLimit('ip:2', 1, 1_000, t + 1001)).toMatchObject({ allowed: true, remaining: 0 });
   });
 
-  it('limit<=0 或 windowMs<=0 视为不限流（字典可关闭）', () => {
+  it('limit<=0 或 windowMs<=0 时函数内部兜底放行（配置层已禁止非正数，仅防调用方误传）', () => {
     expect(checkRateLimit('off:1', 0, 60_000, 100)).toMatchObject({ allowed: true, remaining: 0 });
     expect(checkRateLimit('off:2', -1, 60_000, 100).allowed).toBe(true);
     expect(checkRateLimit('off:3', 5, 0, 100).allowed).toBe(true);
@@ -37,6 +37,17 @@ describe('接口限流（单元）', () => {
     const denied = checkRateLimit('retry:1', 1, 5_000, t + 1000);
     expect(denied.allowed).toBe(false);
     expect(denied.retryAfter).toBe(4); // (t+5000 - (t+1000))/1000
+  });
+
+  it('运行时改窗口长度后按新窗口重新计数（不沿用旧窗口的剩余时间）', () => {
+    const t = 1_000_000;
+    expect(checkRateLimit('resize:1', 2, 60_000, t).allowed).toBe(true);
+    expect(checkRateLimit('resize:1', 2, 60_000, t + 10).allowed).toBe(true);
+    // 第三次本该被拒；窗口改成 1 秒后应视为新窗口，配置立即生效
+    const resized = checkRateLimit('resize:1', 2, 1_000, t + 20);
+    expect(resized.allowed).toBe(true);
+    expect(resized.remaining).toBe(1);
+    expect(resized.resetIn).toBe(1);
   });
 
   it('不同 key 独立计数', () => {
@@ -92,6 +103,25 @@ describe('限流类别判定（单元）', () => {
 
   it('认证入口优先级高于协议前缀', () => {
     expect(rateLimitScopeOf(req('/api/v1/auth/login', 'POST'))).toBe('auth');
+  });
+
+  it('尾斜杠与 Express 非严格路由同口径，不能借此绕过 auth 桶', () => {
+    // 路由本身对尾斜杠不敏感，限流层若按精确匹配就会把登录漏到 write 桶（60 次/分钟）
+    expect(rateLimitScopeOf(req('/api/v1/auth/login/', 'POST'))).toBe('auth');
+    expect(rateLimitScopeOf(req('/api/v1/auth/login//', 'POST'))).toBe('auth');
+    expect(rateLimitScopeOf(req('/api/v1/auth/change-password/', 'POST'))).toBe('auth');
+    // 非 auth 路径的尾斜杠不该改变分桶语义
+    expect(rateLimitScopeOf(req('/api/v1/packages/'))).toBe('read');
+    expect(rateLimitScopeOf(req('/npm/-/ping/'))).toBe('npm');
+  });
+
+  it('method 大小写归一：小写 get/head 仍算读，小写 post 仍算写', () => {
+    expect(rateLimitScopeOf(req('/npm/-/v1/search', 'get'))).toBe('npm');
+    expect(rateLimitScopeOf(req('/pypi/simple/foo', 'head'))).toBe('pypi');
+    expect(rateLimitScopeOf(req('/api/v1/health', 'get'))).toBe('read');
+    expect(rateLimitScopeOf(req('/npm/pkg', 'put'))).toBe('write');
+    // 小写 post 打登录不能漏到 write 桶
+    expect(rateLimitScopeOf(req('/api/v1/auth/login', 'post'))).toBe('auth');
   });
 });
 
