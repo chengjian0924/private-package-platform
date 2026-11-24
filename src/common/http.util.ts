@@ -1,6 +1,7 @@
 import type { NextFunction, Request, Response } from 'express';
 import { randomUUID } from 'node:crypto';
 import * as crypto from 'node:crypto';
+import { createReadStream } from 'node:fs';
 import { getConfig } from '../config/config';
 
 export type TracedRequest = Request & { traceId?: string };
@@ -51,6 +52,20 @@ export function bearerToken(header?: string): string | null {
 
 export function sha256Hex(input: Buffer | string): string {
   return crypto.createHash('sha256').update(input).digest('hex');
+}
+
+/**
+ * 流式计算文件 sha256，避免把上百 MB 的包整块读进内存。
+ * 导入幂等去重需要内容指纹（文件名 + 大小不足以区分「同名同版本重新打包」）。
+ */
+export function sha256File(absPath: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash('sha256');
+    const stream = createReadStream(absPath);
+    stream.on('data', (chunk) => hash.update(chunk));
+    stream.on('error', reject);
+    stream.on('end', () => resolve(hash.digest('hex')));
+  });
 }
 
 export function digestOf(buf: Buffer): { sha256: string; shasum: string; integrity: string } {

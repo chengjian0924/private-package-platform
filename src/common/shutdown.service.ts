@@ -22,6 +22,13 @@ export class ShutdownService implements OnApplicationShutdown {
   private drainResolve: (() => void) | null = null;
   private graceTimer?: NodeJS.Timeout;
   private drainStartedAt = 0;
+  /** 排空结束时通知 main.ts 撤掉硬超时看门狗，避免正常停机被误判为「强制退出」 */
+  private drainedCallback: ((timedOut: boolean) => void) | null = null;
+
+  /** 注册排空结束回调（成功或超时都会触发），重复注册以最后一次为准 */
+  whenDrained(callback: (timedOut: boolean) => void): void {
+    this.drainedCallback = callback;
+  }
 
   /** 全局中间件：必须在 body 解析与 multer 之前注册 */
   middleware(): RequestHandler {
@@ -108,6 +115,11 @@ export class ShutdownService implements OnApplicationShutdown {
     }
     const resolve = this.drainResolve;
     this.drainResolve = null;
+    try {
+      this.drainedCallback?.(timedOut);
+    } catch {
+      // 回调只做看门狗清理，失败不能影响停机主流程
+    }
     resolve();
   }
 }

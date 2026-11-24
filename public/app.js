@@ -1457,6 +1457,31 @@
         box.classList.remove('hidden');
         $('import-empty').classList.add('hidden');
         $('commit-btn').disabled = true;
+        // 幂等命中：内容与某个未结束批次完全一致，服务端直接复用，不再重复落盘/扫描
+        if (data.deduplicated) {
+          box.innerHTML =
+            '<div class="reason info">该批包与批次 ' + esc(String(data.batchId).slice(0, 8)) +
+            ' 内容完全一致，已复用该批次（未重复落盘）。</div>' + box.innerHTML;
+          showToast('内容重复，已复用已有批次', 'warn');
+          var reusedStatus = data.status;
+          if (reusedStatus === 'VALIDATED' || reusedStatus === 'VALIDATED_WITH_ERRORS') {
+            // 之前已校验过：直接进到入库步骤，不必再扫一遍
+            setStep(3);
+            $('commit-btn').disabled = false;
+            $('report-link').href =
+              '/api/v1/import-batches/' + encodeURIComponent(state.batchId) + '/report?format=csv';
+            $('report-link').classList.remove('hidden');
+            refreshBatchItems();
+            return;
+          }
+          if (reusedStatus === 'VALIDATING') {
+            showToast('该批次正在校验中，请稍候刷新', 'warn');
+            $('commit-btn').disabled = true;
+            return;
+          }
+          setStep(2);
+          return;
+        }
         // 关闭漏洞校验时不展示分步校验：上传后直接跑基础校验并入库，结果就地回显
         if (!scanEnabled()) {
           return autoIngestBatch(box, p, failed);

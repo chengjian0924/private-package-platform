@@ -30,7 +30,7 @@ export class RetentionScheduler implements OnModuleInit, OnModuleDestroy {
     }, interval);
     this.timer.unref();
     this.logger.log(
-      `保留期清理已启用，间隔 ${interval} 毫秒（软删除包 ${getConfig().retention.deletedPackageDays} 天，日志 ${getConfig().retention.logDays} 天）`,
+      `保留期清理已启用，间隔 ${interval} 毫秒（软删除包 ${getConfig().retention.deletedPackageDays} 天，日志 ${getConfig().retention.logDays} 天，失效会话 ${getConfig().retention.sessionDays} 天）`,
     );
   }
 

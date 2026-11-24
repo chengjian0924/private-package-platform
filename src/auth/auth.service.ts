@@ -8,6 +8,34 @@ import { DatabaseService } from '../db/database.service';
 import { hashPassword, validatePasswordStrength, verifyPassword } from './password';
 
 export type Role = 'admin' | 'developer' | 'reader';
+/** 角色代码的唯一来源：接口校验、批量模板、文档与前端下拉都以此为准 */
+export const ROLE_CODES = ['admin', 'developer', 'reader'] as const;
+/** 中文展示名，仅用于提示文案与文档，不参与鉴权 */
+export const ROLE_LABELS: Record<Role, string> = {
+  admin: '管理员',
+  developer: '开发者',
+  reader: '只读',
+};
+/**
+ * 历史命名兼容：早期文档与外部脚本用 viewer 表示「只读」，
+ * 代码与库表统一为 reader。这里把别名收敛掉，避免 viewer 被原样写进 users.role
+ * 之后，读出来被 toRole() 静默降级成 reader，形成「库里是 A、界面显示 B」的漂移。
+ */
+const ROLE_ALIASES: Record<string, Role> = {
+  viewer: 'reader',
+  read: 'reader',
+  read_only: 'reader',
+  readonly: 'reader',
+};
+
+/** 把外部输入归一成合法角色；非法返回 null（由调用方给出明确报错，不静默降级） */
+export function normalizeRole(raw: string | null | undefined): Role | null {
+  const value = (raw || '').trim().toLowerCase();
+  if (!value) return null;
+  if ((ROLE_CODES as readonly string[]).includes(value)) return value as Role;
+  return ROLE_ALIASES[value] ?? null;
+}
+
 /** human: 人员账号；service: 机器账号（CI/流水线），口令随机且不可知，只能用 API 令牌 */
 export type AccountType = 'human' | 'service';
 
@@ -130,7 +158,8 @@ const FAKE_HASH = [
 const USERNAME_PATTERN = /^[A-Za-z0-9._-]{3,32}$/;
 
 function toRole(raw: string): Role {
-  return (['admin', 'developer', 'reader'].includes(raw) ? raw : 'reader') as Role;
+  // 库里的脏值（历史版本或手工改库）只做兜底收敛，不抛错：读路径抛错会让账号直接无法登录
+  return normalizeRole(raw) ?? 'reader';
 }
 
 function toAccountType(raw: string | null | undefined): AccountType {
@@ -373,7 +402,16 @@ export class AuthService {
       throw new ApiError('SYS_CONFLICT', { field: 'username', reason: '用户名已存在' });
     }
 
-    const role: Role = input.role && ROLE_PERMISSIONS[input.role] ? input.role : 'reader';
+    // 角色非法时明确报错：静默回落成 reader 会让「本想开开发者、结果只能读」的问题
+    // 一直拖到用户发布失败才被发现
+    const requestedRole = input.role === undefined ? undefined : normalizeRole(input.role);
+    if (input.role !== undefined && !requestedRole) {
+      throw new ApiError('SYS_VALIDATION', {
+        field: 'role',
+        reason: `角色非法：${input.role}，可选 developer / reader（只读角色的旧名 viewer 已统一为 reader）`,
+      });
+    }
+    const role: Role = requestedRole ?? 'reader';
     // 管理员账号由系统初始化时创建且唯一：接口层不允许再建第二个管理员
     if (role === 'admin') {
       throw new ApiError('SYS_VALIDATION', { field: 'role', reason: '管理员账号唯一，不能新建管理员' });
@@ -430,6 +468,7 @@ export class AuthService {
       const raw = inputs[index] || {};
       const username = (raw.username || '').trim();
       const roleRaw = (raw.role || 'reader').trim();
+      const roleNormalized = normalizeRole(roleRaw);
 
       const reject = (reason: string): void => {
         result.failedCount += 1;
@@ -440,11 +479,11 @@ export class AuthService {
         reject('用户名格式不合法：仅允许字母、数字、点、下划线与短横线，长度 3-32');
         continue;
       }
-      if (!['admin', 'developer', 'reader'].includes(roleRaw)) {
-        reject(`角色非法：${roleRaw || '(空)'}，可选 developer / reader（管理员账号唯一，不可批量创建）`);
+      if (!roleNormalized) {
+        reject(`角色非法：${roleRaw || '(空)'}，可选 developer / reader（只读角色的旧名 viewer 已统一为 reader）`);
         continue;
       }
-      if (roleRaw === 'admin') {
+      if (roleNormalized === 'admin') {
         reject('管理员账号唯一，不能批量创建管理员');
         continue;
       }
@@ -458,7 +497,7 @@ export class AuthService {
       }
       seen.add(username);
 
-      const role = roleRaw as Role;
+      const role = roleNormalized;
       let passwordHash = hashCache.get(role);
       if (!passwordHash) {
         passwordHash = await hashPassword(this.initialPasswordFor(role));
@@ -522,21 +561,32 @@ export class AuthService {
     const row = this.db.get<UserRow>('SELECT * FROM users WHERE id = ?', userId);
     if (!row) throw new ApiError('SYS_NOT_FOUND', { resource: 'user' });
 
+    // 入参角色先归一：否则 viewer / developr 这类脏值会被原样写进 users.role，
+    // 读出来又被 toRole() 兜底成 reader，形成「库里一个值、界面另一个值」的静默漂移
+    const currentRole = toRole(row.role);
+    const nextRole = patch.role === undefined ? currentRole : normalizeRole(patch.role);
+    if (!nextRole) {
+      throw new ApiError('SYS_VALIDATION', {
+        field: 'role',
+        reason: `角色非法：${patch.role}，可选 developer / reader（只读角色的旧名 viewer 已统一为 reader）`,
+      });
+    }
+
     // 管理员账号唯一：既不接受把普通账号提升为管理员，也不允许降级或禁用内置管理员
-    if (patch.role === 'admin' && toRole(row.role) !== 'admin') {
+    if (nextRole === 'admin' && currentRole !== 'admin') {
       throw new ApiError('SYS_VALIDATION', { field: 'role', reason: '管理员账号唯一，不能将其他账号提升为管理员' });
     }
-    if (patch.role && patch.role !== 'admin' && toRole(row.role) === 'admin') {
+    if (nextRole !== 'admin' && currentRole === 'admin') {
       throw new ApiError('SYS_VALIDATION', { field: 'role', reason: '管理员账号唯一，管理员角色不可变更' });
     }
-    if (patch.status === 'disabled' && toRole(row.role) === 'admin') {
+    if (patch.status === 'disabled' && currentRole === 'admin') {
       throw new ApiError('SYS_VALIDATION', { field: 'status', reason: '管理员账号唯一，内置管理员不可禁用' });
     }
 
     const now = nowIso();
     this.db.run(
       `UPDATE users SET role = ?, status = ?, display_name = ?, email = ?, updated_at = ? WHERE id = ?`,
-      patch.role ?? row.role,
+      nextRole,
       patch.status ?? row.status,
       patch.displayName ?? row.display_name,
       patch.email ?? row.email,
@@ -611,7 +661,27 @@ export class AuthService {
       ctx.ip ?? null,
       (ctx.userAgent ?? '').slice(0, 300) || null,
     );
+    // 单账号会话数封顶：客户端每次重试登录都插一行、从不登出的话，sessions 会无界增长。
+    // 超出上限时吊销最早签发的那些（保留最新这次），用户感知是「旧设备被踢下线」。
+    this.revokeOverflowSessions(userId, cfg.sessionMaxPerUser);
     return { sid, maxAge: cfg.sessionTtlSec };
+  }
+
+  /** 吊销该用户超出上限的最早会话；返回被吊销的数量 */
+  private revokeOverflowSessions(userId: string, maxPerUser: number): number {
+    const res = this.db.run(
+      `UPDATE sessions SET revoked_at = ?, revoke_reason = 'replaced'
+        WHERE revoked_at IS NULL AND sid IN (
+          SELECT sid FROM sessions
+           WHERE user_id = ? AND revoked_at IS NULL
+           ORDER BY issued_at DESC, rowid DESC
+           LIMIT -1 OFFSET ?
+        )`,
+      nowIso(),
+      userId,
+      maxPerUser,
+    );
+    return res.changes;
   }
 
   /** 校验会话并滑动空闲有效期；返回 null 表示无效 */
@@ -627,14 +697,40 @@ export class AuthService {
     const user = this.findUserById(row.user_id);
     if (!user) return null;
 
-    const nowStr = nowIso();
-    this.db.run(
-      'UPDATE sessions SET last_seen_at = ?, idle_expires_at = ? WHERE sid = ?',
-      nowStr,
-      addSeconds(nowStr, cfg.sessionIdleTtlSec),
-      sid,
-    );
+    // 活跃时间按间隔回写：每个 registry 请求都写一次 last_seen_at，会让三角色共享的
+    // SQLite 长期占着写锁（WAL 只允许单写者），而空闲有效期并不需要秒级精度。
+    // 回写间隔最多取空闲有效期的一半，避免配置成「回写间隔 > 空闲期」后会话永不续期。
+    const touchSec = Math.min(cfg.sessionTouchIntervalSec, Math.floor(cfg.sessionIdleTtlSec / 2));
+    const remainingMs = new Date(row.idle_expires_at).getTime() - now.getTime();
+    if (remainingMs <= (cfg.sessionIdleTtlSec - touchSec) * 1000) {
+      const nowStr = nowIso();
+      this.db.run(
+        'UPDATE sessions SET last_seen_at = ?, idle_expires_at = ? WHERE sid = ?',
+        nowStr,
+        addSeconds(nowStr, cfg.sessionIdleTtlSec),
+        sid,
+      );
+    }
     return user;
+  }
+
+  /**
+   * 清掉已失效且超过保留期的会话行（过期或已吊销）。
+   * 只在控制台进程的保留期任务里调用：会话行是排障线索，登录即删会丢掉「谁在什么时候登录过」，
+   * 但也不能永久累积——sessions 只增不减，一年就是全库最大的表。
+   * 返回删除行数；retentionDays<=0 表示不清理。
+   */
+  purgeExpiredSessions(retentionDays: number): number {
+    if (retentionDays <= 0) return 0;
+    const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000).toISOString();
+    const res = this.db.run(
+      `DELETE FROM sessions
+        WHERE (revoked_at IS NOT NULL AND revoked_at < ?)
+           OR (revoked_at IS NULL AND expires_at < ?)`,
+      cutoff,
+      cutoff,
+    );
+    return res.changes;
   }
 
   revokeSession(sid: string, reason: string): void {
@@ -657,13 +753,44 @@ export class AuthService {
     return res.changes;
   }
 
-  sessionCookie(sid: string, maxAgeSec: number): string {
-    const secure = getConfig().publicBaseUrl.startsWith('https://') ? '; Secure' : '';
-    return `yj_sid=${sid}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSec}${secure}`;
+  /**
+   * 会话是否应带 Secure 属性。
+   * auto（默认）按「这一次请求实际走的是什么协议」判断，而不是看基址配置：
+   * - 网关形态信任 X-Forwarded-Proto（TLS 在 Nginx 终结，应用看到的是 http）；
+   * - 直连形态取 TCP/TLS 实际协议，基址写 https 但用户直连 http 端口时不下发 Secure，
+   *   否则浏览器会直接丢弃这条 Cookie，表现为「登录成功却仍是未登录」。
+   * 需要强制时可设 SESSION_COOKIE_SECURE=always/never，不必改 ALLOW_INSECURE_BASE_URL。
+   */
+  cookieSecureFor(req: { protocol?: string; headers: Record<string, unknown> }): boolean {
+    const cfg = getConfig();
+    if (cfg.sessionCookieSecure === 'always') return true;
+    if (cfg.sessionCookieSecure === 'never') return false;
+
+    const forwarded = String(req.headers['x-forwarded-proto'] ?? '')
+      .split(',')[0]
+      .trim()
+      .toLowerCase();
+    if (cfg.deployMode === 'gateway') {
+      // 网关形态下应用只监听回环，XFP 由网关写入；缺失时按 https 处理（网关就该是 TLS）
+      return forwarded ? forwarded === 'https' : true;
+    }
+    if (forwarded === 'https' && cfg.insecureBaseTargets.length === 0) return true;
+    if ((req.protocol || '').toLowerCase() === 'https') return true;
+    // 直连形态没有反代，按基址兜底：基址是 https 说明 TLS 在前置，仍应下发 Secure
+    return cfg.publicBaseUrl.startsWith('https://');
   }
 
-  clearSessionCookie(): string {
-    return 'yj_sid=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0';
+  sessionCookie(sid: string, maxAgeSec: number, secure = false): string {
+    return `yj_sid=${sid}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSec}${secure ? '; Secure' : ''}`;
+  }
+
+  /**
+   * 清除 Cookie 必须与下发时属性一致：登录时带了 Secure，清除时却不带，
+   * 浏览器会认为是另一条 Cookie（同名不同属性），旧值继续跟着请求走，
+   * 表现为「点了退出但仍是登录态」。Expires 供不支持 Max-Age 的老客户端兜底。
+   */
+  clearSessionCookie(secure = false): string {
+    return `yj_sid=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT${secure ? '; Secure' : ''}`;
   }
 
   // ---------- API 令牌 ----------

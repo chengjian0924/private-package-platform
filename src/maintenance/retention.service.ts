@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import * as fsp from 'node:fs/promises';
 import * as path from 'node:path';
 import { AuditService } from '../audit/audit.service';
+import { AuthService } from '../auth/auth.service';
 import { nowIso } from '../common/http.util';
 import { getConfig } from '../config/config';
 import { DatabaseService } from '../db/database.service';
@@ -62,6 +63,7 @@ export class RetentionService {
     private readonly db: DatabaseService,
     private readonly storage: StorageService,
     private readonly audit: AuditService,
+    private readonly auth: AuthService,
   ) {}
 
   /**
@@ -223,8 +225,29 @@ export class RetentionService {
     return { retentionDays, cutoff, dir, scanned, deleted, freedBytes, sample };
   }
 
-  /** 一轮完整清理：包与日志互不影响，任一失败不阻塞另一个 */
-  async runOnce(): Promise<{ packages: DeletedVersionPurgeResult; logs: LogPurgeResult; at: string }> {
+  /**
+   * 删除已失效且超过保留期的会话行。
+   * 会话只会随登录增加：不清理时，长期运行的实例每次登录都留一行，
+   * sessions 表最终会比包版本表还大，且保留期整表扫描会拖慢共享库的写锁。
+   * 保留期内保留是为了排障（谁在何时从哪个 IP 登录过），过期后即无查询价值。
+   */
+  purgeExpiredSessions(): { retentionDays: number; deleted: number } {
+    const retentionDays = getConfig().retention.sessionDays;
+    if (retentionDays <= 0) return { retentionDays: 0, deleted: 0 };
+    const deleted = this.auth.purgeExpiredSessions(retentionDays);
+    if (deleted > 0) {
+      this.logger.log(`会话清理完成：删除 ${deleted} 行失效会话，保留期 ${retentionDays} 天`);
+    }
+    return { retentionDays, deleted };
+  }
+
+  /** 一轮完整清理：包、日志与会话互不影响，任一失败不阻塞另一个 */
+  async runOnce(): Promise<{
+    packages: DeletedVersionPurgeResult;
+    logs: LogPurgeResult;
+    sessions: { retentionDays: number; deleted: number };
+    at: string;
+  }> {
     const at = nowIso();
     const packages = await this.purgeDeletedPackages().catch((err) => {
       this.logger.error(`软删除包清理失败: ${(err as Error).message}`);
@@ -250,6 +273,14 @@ export class RetentionService {
         sample: [],
       };
     });
-    return { packages, logs, at };
+    const sessions = (() => {
+      try {
+        return this.purgeExpiredSessions();
+      } catch (err) {
+        this.logger.error(`会话清理失败: ${(err as Error).message}`);
+        return { retentionDays: getConfig().retention.sessionDays, deleted: 0 };
+      }
+    })();
+    return { packages, logs, sessions, at };
   }
 }

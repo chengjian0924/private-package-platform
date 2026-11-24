@@ -72,6 +72,8 @@ async function seedAccounts(app: NestExpressApplication): Promise<Record<string,
 export interface TestAppOptions {
   /** 跳过种子账号初始化：用于验证内置管理员首登强制改密（内置密码 admin123 保持不变） */
   skipSeed?: boolean;
+  /** 额外环境变量（如 SESSION_COOKIE_SECURE / SESSION_MAX_PER_USER），在 resetConfigCache 前注入 */
+  env?: Record<string, string | undefined>;
 }
 
 /**
@@ -95,6 +97,13 @@ export async function createTestApp(name: string, options: TestAppOptions = {}):
   // ensureBootstrapAdmin 读该变量建内置管理员账号，须在 resetConfigCache 前设置
   process.env.BOOTSTRAP_ADMIN_USERNAME = ADMIN.username;
   process.env.DATA_DIR = dataDir;
+  // 用例级环境变量：先记录原值，close 时还原，避免污染同进程内其它用例文件
+  const savedEnv: Record<string, string | undefined> = {};
+  for (const [key, value] of Object.entries(options.env ?? {})) {
+    savedEnv[key] = process.env[key];
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
   resetConfigCache();
 
   const app = await NestFactory.create<NestExpressApplication>(AppModule, { bodyParser: false, logger: false });
@@ -112,6 +121,11 @@ export async function createTestApp(name: string, options: TestAppOptions = {}):
     npmTokens,
     close: async () => {
       await app.close();
+      for (const [key, value] of Object.entries(savedEnv)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+      resetConfigCache();
       fs.rmSync(dataDir, { recursive: true, force: true });
     },
   };

@@ -26,6 +26,18 @@ export type DeployMode = 'direct' | 'gateway';
 const PROCESS_ROLES: ProcessRole[] = ['all', 'console', 'npm', 'pypi'];
 const DEPLOY_MODES: DeployMode[] = ['direct', 'gateway'];
 
+/**
+ * 对外入口标识：PUBLIC_BASE_URL 对应控制台，NPM_BASE_URL / PYPI_BASE_URL 各对应一个 registry。
+ * 明文 HTTP 豁免按入口粒度配置——内网 npm/pypi 允许 http、控制台走网关 TLS 的混合部署很常见，
+ * 用一个全局开关会逼着运维在「全部放行」和「全部拒绝」之间二选一。
+ */
+export type BaseTarget = 'console' | 'npm' | 'pypi';
+export const BASE_TARGETS: BaseTarget[] = ['console', 'npm', 'pypi'];
+
+/** 会话 Cookie 的 Secure 属性策略 */
+export type CookieSecureMode = 'auto' | 'always' | 'never';
+const COOKIE_SECURE_MODES: CookieSecureMode[] = ['auto', 'always', 'never'];
+
 /** SNTP 时钟源：审计时间与 Token 过期判断的可信基准 */
 export interface ClockConfig {
   /** SNTP 服务器；空表示不采样 */
@@ -112,8 +124,21 @@ export interface AppConfig {
   pypiBaseUrl: string;
   /** 生产环境允许 http 基址（无 TLS 网关/应用内 HTTPS 时的显式豁免） */
   allowInsecureBaseUrl: boolean;
+  /** 允许明文 HTTP 的具体入口；allowInsecureBaseUrl 是它的兼容布尔投影（任一入口放行即为 true） */
+  insecureBaseTargets: BaseTarget[];
   sessionTtlSec: number;
   sessionIdleTtlSec: number;
+  /**
+   * 会话 Cookie 的 Secure 属性策略：
+   * auto（默认）按请求实际协议推断，always/never 供反向代理改写与内网排障显式指定。
+   * 之所以不跟着 ALLOW_INSECURE_BASE_URL 走：后者是「基址校验豁免」，两者粒度不同——
+   * 基址写 https 但用户直连 http 端口时，带 Secure 的 Cookie 会被浏览器丢弃，登录陷入死循环。
+   */
+  sessionCookieSecure: CookieSecureMode;
+  /** 同一账号保留的有效会话上限，超出吊销最早签发的（异常客户端反复登录不会把会话表撑爆） */
+  sessionMaxPerUser: number;
+  /** 活跃时间回写节流（秒）：每个请求都写 last_seen_at 会让共享 SQLite 长期占着写锁 */
+  sessionTouchIntervalSec: number;
   authCacheTtlMs: number;
   /** 本地账号认证：口令强度、失败锁定与首启管理员引导 */
   auth: {
@@ -161,10 +186,16 @@ export interface AppConfig {
     /** 日志目录，默认 <dataDir>/logs */
     dir: string;
   };
-  /** 保留与清理：超期未恢复的软删除包、日志文件的存活天数（0 表示不自动清理） */
+  /** 保留与清理：超期未恢复的软删除包、日志文件、过期会话的存活天数（0 表示不自动清理） */
   retention: {
     deletedPackageDays: number;
     logDays: number;
+    /**
+     * 已失效会话（过期或已吊销）在库里的保留天数，默认 30 天。
+     * 会话行既是排障线索也是审计的关联依据，不能登录即删；但也不能无限累积——
+     * 每次登录插一行、从不清理，一年下来 sessions 表会成为全库最大的表。
+     */
+    sessionDays: number;
   };
   /**
    * 包文件备份：开启后按间隔把对象存储里的包增量复制到备份目录。
@@ -238,6 +269,46 @@ function boolEnv(key: string, fallback: boolean): boolean {
   return raw.toLowerCase() === 'true';
 }
 
+/**
+ * ALLOW_INSECURE_BASE_URL 的取值形态：
+ * - true/all/1/yes → 三个入口全部放行（与历史布尔语义完全一致）
+ * - false/空/0/no   → 全部拒绝
+ * - console,npm,pypi 的逗号组合 → 只放行指定入口（内网 registry + 网关 TLS 控制台的混合部署）
+ * 拼错的入口直接抛错，避免运维以为放行了某个入口、实际没生效。
+ */
+function insecureBaseTargetsEnv(key: string): BaseTarget[] {
+  const raw = (process.env[key] || '').trim().toLowerCase();
+  if (!raw || ['false', '0', 'no', 'off'].includes(raw)) return [];
+  if (['true', '1', 'yes', 'on', 'all', '*'].includes(raw)) return [...BASE_TARGETS];
+  const aliases: Record<string, BaseTarget> = {
+    console: 'console',
+    web: 'console',
+    public: 'console',
+    npm: 'npm',
+    pypi: 'pypi',
+    pip: 'pypi',
+  };
+  const out: BaseTarget[] = [];
+  for (const part of raw.split(',').map((p) => p.trim()).filter(Boolean)) {
+    const target = aliases[part];
+    if (!target) {
+      throw new Error(
+        `环境变量 ${key} 取值非法: ${part}，可选 true/false 或 console/npm/pypi 的逗号组合（如 ALLOW_INSECURE_BASE_URL=npm,pypi）`,
+      );
+    }
+    if (!out.includes(target)) out.push(target);
+  }
+  return out;
+}
+
+function cookieSecureModeEnv(key: string): CookieSecureMode {
+  const raw = (process.env[key] || 'auto').trim().toLowerCase();
+  if (!COOKIE_SECURE_MODES.includes(raw as CookieSecureMode)) {
+    throw new Error(`环境变量 ${key} 取值非法: ${raw}，可选 ${COOKIE_SECURE_MODES.join('/')}`);
+  }
+  return raw as CookieSecureMode;
+}
+
 /** 拆分部署的默认端口：控制台 3000、npm 3001、pypi 3002（测试环境整体 +100，避免与本机开发端口冲突） */
 function defaultPort(envName: string, role: ProcessRole): number {
   const base = envName === 'test' ? 3100 : 3000;
@@ -304,6 +375,8 @@ function buildConfig(): void {
   }
   const dataDir = path.resolve(process.cwd(), process.env.DATA_DIR || './data/dev');
   const mode = (process.env.BATCH_DEFAULT_MODE || 'partial').toLowerCase();
+  // 明文 HTTP 豁免按入口解析：布尔语义照旧（true=全部放行），也支持 console,npm,pypi 子集
+  const insecureBaseTargets = insecureBaseTargetsEnv('ALLOW_INSECURE_BASE_URL');
   // 配置层先收敛为字面量联合类型，避免下游再做类型断言
   const blockSeverity = severityEnv('SECURITY_BLOCK_SEVERITY', 'critical', ['critical', 'high']);
   const quarantineSeverity = severityEnv('SECURITY_QUARANTINE_SEVERITY', 'high', ['high', 'medium']);
@@ -359,7 +432,8 @@ function buildConfig(): void {
   // 本地认证：阈值一次校验完，避免出现“0 次失败即锁定”这类上线后才炸的配置
   const passwordMinLength = intEnv('PASSWORD_MIN_LENGTH', 8);
   const loginMaxFailures = intEnv('LOGIN_MAX_FAILURES', 5);
-  const loginLockMinutes = intEnv('LOGIN_LOCK_MINUTES', 15);  if (passwordMinLength < 8 || passwordMinLength > 64) {
+  const loginLockMinutes = intEnv('LOGIN_LOCK_MINUTES', 15);
+  if (passwordMinLength < 8 || passwordMinLength > 64) {
     throw new Error(`密码最小长度不合法：PASSWORD_MIN_LENGTH=${passwordMinLength}，需在 8-64 之间`);
   }
   if (loginMaxFailures < 1 || loginMaxFailures > 100) {
@@ -369,12 +443,24 @@ function buildConfig(): void {
     throw new Error(`登录锁定时长不合法：LOGIN_LOCK_MINUTES=${loginLockMinutes}，需在 1-1440 之间`);
   }
 
+  // 会话：上限 1-1000，节流间隔 0-3600 秒（0 表示每个请求都回写，仅排障时用）
+  const sessionMaxPerUser = intEnv('SESSION_MAX_PER_USER', 20);
+  const sessionTouchIntervalSec = intEnv('SESSION_TOUCH_INTERVAL_SEC', 60);
+  if (sessionMaxPerUser < 1 || sessionMaxPerUser > 1000) {
+    throw new Error(`会话数上限不合法：SESSION_MAX_PER_USER=${sessionMaxPerUser}，需在 1-1000 之间`);
+  }
+  if (sessionTouchIntervalSec < 0 || sessionTouchIntervalSec > 3600) {
+    throw new Error(`会话回写间隔不合法：SESSION_TOUCH_INTERVAL_SEC=${sessionTouchIntervalSec}，需在 0-3600 之间`);
+  }
+
   // 保留与清理：包与日志的存活天数，0 表示不自动清理；上限 10 年挡掉手滑填的 9999
   const deletedPackageRetentionDays = intEnv('DELETED_PACKAGE_RETENTION_DAYS', 30);
   const logRetentionDays = intEnv('LOG_RETENTION_DAYS', 180);
+  const sessionRetentionDays = intEnv('SESSION_RETENTION_DAYS', 30);
   for (const [envName, value] of [
     ['DELETED_PACKAGE_RETENTION_DAYS', deletedPackageRetentionDays],
     ['LOG_RETENTION_DAYS', logRetentionDays],
+    ['SESSION_RETENTION_DAYS', sessionRetentionDays],
   ] as const) {
     if (value < 0 || value > 3650) {
       throw new Error(`保留天数不合法：${envName}=${value}，需在 0-3650 之间（0 表示不自动清理）`);
@@ -440,9 +526,13 @@ function buildConfig(): void {
     // 单进程部署不设 NPM/PYPI_BASE_URL 即与控制台同址；拆进程后各自指向独立入口
     npmBaseUrl: (process.env.NPM_BASE_URL || requireEnv('PUBLIC_BASE_URL')).replace(/\/+$/, ''),
     pypiBaseUrl: (process.env.PYPI_BASE_URL || requireEnv('PUBLIC_BASE_URL')).replace(/\/+$/, ''),
-    allowInsecureBaseUrl: boolEnv('ALLOW_INSECURE_BASE_URL', false),
+    allowInsecureBaseUrl: insecureBaseTargets.length > 0,
+    insecureBaseTargets,
     sessionTtlSec: intEnv('SESSION_TTL_SEC', 28800),
     sessionIdleTtlSec: intEnv('SESSION_IDLE_TTL_SEC', 1800),
+    sessionCookieSecure: cookieSecureModeEnv('SESSION_COOKIE_SECURE'),
+    sessionMaxPerUser,
+    sessionTouchIntervalSec,
     authCacheTtlMs: intEnv('AUTH_CACHE_TTL_MS', 5000),
     auth: {
       passwordMinLength,
@@ -486,6 +576,7 @@ function buildConfig(): void {
     retention: {
       deletedPackageDays: deletedPackageRetentionDays,
       logDays: logRetentionDays,
+      sessionDays: sessionRetentionDays,
     },
     // 包文件备份：默认开启；字典里可关闭或改间隔，关闭后已有备份保留
     backup: {
@@ -620,17 +711,20 @@ export function productionConfigProblems(cfg: AppConfig): string[] {
   // 内置管理员初始密码是固定弱口令，靠 must_change_password 强制首登改密兜底，
   // 因此这里不再对它做强度校验（校验会导致默认 admin123 直接拒绝建号）
 
-  // 显式豁免 ALLOW_INSECURE_BASE_URL 用于直连部署；默认仍要求 HTTPS（三个入口一并校验）
-  for (const [label, base] of [
-    ['PUBLIC_BASE_URL', cfg.publicBaseUrl],
-    ['NPM_BASE_URL', cfg.npmBaseUrl],
-    ['PYPI_BASE_URL', cfg.pypiBaseUrl],
+  // 显式豁免 ALLOW_INSECURE_BASE_URL 用于直连部署；默认仍要求 HTTPS（三个入口逐个校验）。
+  // 豁免按入口粒度生效：只放行 npm/pypi 时，控制台仍必须是 https，
+  // 不会因为「给 registry 开了 http」顺带把登录入口也降级成明文。
+  for (const [label, base, target] of [
+    ['PUBLIC_BASE_URL', cfg.publicBaseUrl, 'console'],
+    ['NPM_BASE_URL', cfg.npmBaseUrl, 'npm'],
+    ['PYPI_BASE_URL', cfg.pypiBaseUrl, 'pypi'],
   ] as const) {
-    if (!base.startsWith('https://') && !cfg.allowInsecureBaseUrl) {
-      problems.push(
-        `${label} 必须为 https://（当前 ${base}）；确需直连 HTTP 请显式设置 ALLOW_INSECURE_BASE_URL=true`,
-      );
-    }
+    if (base.startsWith('https://')) continue;
+    if (cfg.insecureBaseTargets.includes(target)) continue;
+    problems.push(
+      `${label} 必须为 https://（当前 ${base}）；确需该入口直连 HTTP 请显式设置 ALLOW_INSECURE_BASE_URL=${target}` +
+        `（多个入口用逗号分隔，如 console,npm,pypi）`,
+    );
   }
 
   // 网关形态下应用只应监听回环：0.0.0.0 会让后端端口绕过网关 TLS/ACL 直接暴露。

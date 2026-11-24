@@ -49,6 +49,9 @@ CREATE TABLE IF NOT EXISTS sessions (
   user_agent TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+-- 保留期清理按 expires_at/revoked_at 扫描：没有索引时每轮都是全表扫，会话表越大越拖写锁
+CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
+CREATE INDEX IF NOT EXISTS idx_sessions_revoked ON sessions(revoked_at);
 
 CREATE TABLE IF NOT EXISTS api_tokens (
   token_hash TEXT PRIMARY KEY,
@@ -110,6 +113,9 @@ CREATE TABLE IF NOT EXISTS import_batches (
   created_at TEXT NOT NULL,
   finished_at TEXT
 );
+
+-- 幂等去重：同操作者上传同内容时按 manifest_hash 命中在途批次，避免重复落盘与重复扫描
+CREATE INDEX IF NOT EXISTS idx_batches_manifest ON import_batches(manifest_hash, operator_id);
 
 CREATE TABLE IF NOT EXISTS import_batch_items (
   id TEXT PRIMARY KEY,

@@ -103,6 +103,8 @@ export class ImportController {
         files: expanded,
         operatorId: req.user!.id,
       });
+      // 幂等命中时批次是复用的，审计里标出来，避免「一次上传两条创建记录」看起来像重复提交成功
+      const deduplicated = 'deduplicated' in result && result.deduplicated === true;
       this.audit.log({
         traceId: req.traceId,
         actorId: req.user!.id,
@@ -111,7 +113,14 @@ export class ImportController {
         resourceId: result.batchId,
         result: 'success',
         ip: clientIp(req),
-        detail: { mode: 'auto', uploaded: files.length, expanded: expanded.length, preview: result.preview, failed: result.failed },
+        detail: {
+          mode: 'auto',
+          uploaded: files.length,
+          expanded: expanded.length,
+          preview: result.preview,
+          failed: result.failed,
+          deduplicated,
+        },
       });
       return result;
     } finally {

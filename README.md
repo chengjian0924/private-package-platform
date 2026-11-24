@@ -102,9 +102,12 @@ npm run start:test# 测试环境：http://localhost:3100，数据目录 data/tes
 | `DATA_DIR` | `./data/dev` | `./data/test` | SQLite 与包文件根目录 |
 | `DICTIONARY_SYNC_INTERVAL_MS` | `1000` | `1000` | 字典覆盖层跨进程回读间隔（毫秒，0–60000，0 表示每次读取都回读）；三角色共享同一库，字典保存后其他进程在该间隔内自动同步，无需重启 |
 | `PUBLIC_BASE_URL` | `http://localhost:3000` | `http://localhost:3100` | 生成 tarball / 下载地址的基址 |
-| `ALLOW_INSECURE_BASE_URL` | `false` | `false` | 显式豁免生产环境 `http://` 基址（A1）；当前生产为 HTTP 直连形态需设 `true`，切回 TLS 网关后必须改回 `false` |
+| `ALLOW_INSECURE_BASE_URL` | `false` | `false` | 显式豁免生产环境 `http://` 基址（A1）。取值为 `true`（三个入口全部放行）或逗号组合 `console,npm,pypi`（只放行指定入口）；当前生产为 HTTP 直连形态需设 `true`，切回 TLS 网关后必须改回 `false`。生产护栏按入口逐个判定，一处豁免不会顺带放行其它入口 |
 | `SESSION_TTL_SEC` | `28800` | `7200` | 会话绝对有效期（秒） |
 | `SESSION_IDLE_TTL_SEC` | `1800` | `900` | 会话空闲超时（秒） |
+| `SESSION_COOKIE_SECURE` | `auto` | `auto` | 会话 Cookie 的 `Secure` 属性：`auto` 按本次请求实际协议推断（网关形态信任 `X-Forwarded-Proto`，直连形态看实际协议与基址），`always` / `never` 用于反代改写或内网排障强制指定。与 `ALLOW_INSECURE_BASE_URL` 解耦——后者只影响基址校验 |
+| `SESSION_MAX_PER_USER` | `20` | `20` | 单账号保留的有效会话上限（1–1000），超出时吊销最早签发的（旧设备被顶下线），防止异常客户端反复登录把会话表撑爆 |
+| `SESSION_TOUCH_INTERVAL_SEC` | `60` | `60` | `last_seen_at` 回写节流（秒，0–3600，0 表示每请求都写）；避免 registry 高频请求长期占用共享 SQLite 写锁 |
 | `AUTH_CACHE_TTL_MS` | `5000` | `5000` | 鉴权决策缓存 TTL（毫秒）。缓存键含角色，角色变更即时生效，不再有 TTL 内的旧权限窗口 |
 | `API_TOKEN_TTL_DAYS` | `90` | `90` | 新签发 API 令牌的默认有效期（天），`0` 表示不过期；创建/签发界面可选 30/60/90/180/365 天或永不过期，也可用 `expiresInDays` 单独指定，存量令牌不受影响 |
 | `PASSWORD_MIN_LENGTH` | `8` | `8` | 口令最小长度（8–64）；生产环境在 `deploy/.env.production` 中同样设为 `8`；建号初始口令为 16 位随机串 |
@@ -189,6 +192,7 @@ npm run start:test# 测试环境：http://localhost:3100，数据目录 data/tes
 | `LOG_DIR` | `<DATA_DIR>/logs` | 同左 | 日志目录；清理任务只删该目录下的 `*.log` / `*.log.N` / `*.log.gz` |
 | `LOG_RETENTION_DAYS` | `180` | `180` | 日志文件保留天数，默认半年，`0` 表示不自动清理。**可在控制台「字典管理」中运行时覆盖** |
 | `DELETED_PACKAGE_RETENTION_DAYS` | `30` | `30` | 软删除版本的可恢复天数，超期未恢复则硬删除（记录 + 对象文件 + 扫描记录 + 空包壳），`0` 表示不自动清理。**可在控制台「字典管理」中运行时覆盖** |
+| `SESSION_RETENTION_DAYS` | `30` | `30` | 已失效（过期或已吊销）会话行的保留天数，`0` 表示不清理；由保留期任务每小时检查一次（取消登录即删，保留期内可回溯「谁在何时从哪个 IP 登录过」） |
 | `RETENTION_SWEEP_INTERVAL_MS` | `3600000` | 同左 | 保留期清理的扫描间隔（毫秒），`<=0` 关闭定时任务（仍可手动调用服务） |
 | `BACKUP_ENABLED` | `true` | `true` | 是否备份入库的包文件。**可在控制台「字典管理」中运行时覆盖**。关闭只停止后续备份，已生成的备份不删除 |
 | `BACKUP_INTERVAL_MINUTES` | `60` | `60` | 备份增量同步间隔（分钟），取值 1–10080。**可在控制台「字典管理」中运行时覆盖** |
@@ -278,6 +282,12 @@ twine upload --repository-url http://<host>:3000/pypi/ dist/*
 ```
 
 令牌获取：控制台「访问令牌」页创建，或 `POST /api/v1/auth/tokens`；CLI 场景使用 Basic（`用户名:密码`）或 Bearer（`yj_...`）鉴权。
+
+几个容易踩到的运行时行为：
+
+- **批量导入幂等**：`POST /api/v1/import-batches/auto` 的 `manifest_hash` 由「文件内容 sha256 + 包身份 + targets」算出。同一操作者重复提交同一批包（双击、浏览器重发、网络重试）会命中同一批**未结束**批次并返回 `deduplicated: true`，不重复落盘、不重复扫描；文件名相同但内容被重新打包的包算不同批次。已结束（COMPLETED / PARTIAL_COMPLETED / FAILED）的批次不复用——那通常是「删了版本想重导」，交给版本查重给出明确提示。
+- **会话 Cookie**：`Secure` 跟着本次请求实际协议走（网关形态看 `X-Forwarded-Proto`），不跟 `ALLOW_INSECURE_BASE_URL` 绑定；需要强制时用 `SESSION_COOKIE_SECURE=always/never`。登出下发的清除 Cookie 与签发时属性一致，避免「点了退出仍在登录态」。
+- **优雅停机**：SIGTERM 后新请求直接 503 并排空在途请求；排空完成后撤掉硬超时看门狗，进程自然退出。真超时（`SHUTDOWN_HARD_TIMEOUT_MS`）时记一条 error 日志并以退出码 0 结束——停机是预期动作，用非 0 退出码会让 systemd / Docker 把滚动重启误记为崩溃。
 
 ## 7. 安全校验
 

@@ -1545,6 +1545,7 @@ textarea.input {
 
 .reason { color: var(--err); font-size: var(--fs-xs); }
 .reason.warn { color: var(--warn); }
+.reason.info { color: var(--muted); }
 
 /* ========== 密钥/一次性展示 ========== */
 .token-result {

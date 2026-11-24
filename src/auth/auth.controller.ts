@@ -79,7 +79,7 @@ export class AuthController {
         ip: clientIp(req),
         userAgent: req.header('user-agent'),
       });
-      res.setHeader('Set-Cookie', this.auth.sessionCookie(result.sid, result.maxAge));
+      res.setHeader('Set-Cookie', this.auth.sessionCookie(result.sid, result.maxAge, this.auth.cookieSecureFor(req)));
       this.audit.log({
         traceId: req.traceId,
         actorId: result.user.id,
@@ -127,7 +127,7 @@ export class AuthController {
         detail: { revokedSessions: revoked, scope: 'global' },
       });
     }
-    res.setHeader('Set-Cookie', this.auth.clearSessionCookie());
+    res.setHeader('Set-Cookie', this.auth.clearSessionCookie(this.auth.cookieSecureFor(req)));
     if (req.method === 'GET') {
       res.redirect('/');
     } else {

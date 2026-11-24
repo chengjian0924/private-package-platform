@@ -86,8 +86,11 @@ PORT=3000
 # 直连形态监听所有网卡（可改为内网网卡 IP 更收敛）；切回 Nginx 网关后改回 127.0.0.1
 BIND_HOST=0.0.0.0
 PUBLIC_BASE_URL=http://yuanjian.example.internal
-# 明文 HTTP 直连豁免：生产模式必须显式设置，否则启动护栏拒绝 http:// 基址
+# 明文 HTTP 直连豁免：生产模式必须显式设置，否则启动护栏拒绝 http:// 基址。
+# 取值 true（三个入口全放行）或逗号组合 console,npm,pypi（只放行指定入口）
 ALLOW_INSECURE_BASE_URL=true
+# 会话 Cookie 的 Secure：auto（按请求实际协议推断，默认）/ always / never，与上面解耦
+SESSION_COOKIE_SECURE=auto
 DATA_DIR=/var/lib/yuanjian/data
 QUARANTINE_DIR=/var/lib/yuanjian/quarantine
 # 扫描记录/报告/埋点保留天数（RV-26）：超期自动清理但每个版本保留最近一次扫描；0 表示关闭
@@ -118,7 +121,7 @@ sudo chmod 600 /opt/yuanjian/.env.production
 | 校验项 | 要求 |
 | --- | --- |
 | `BOOTSTRAP_ADMIN_PASSWORD` | 若配置则必须满足强度：≥ `PASSWORD_MIN_LENGTH` 位、不含用户名、非常见弱口令 |
-| `PUBLIC_BASE_URL` | 必须 `https://`；当前直连形态需显式 `ALLOW_INSECURE_BASE_URL=true`，启动时打印明文告警 |
+| `PUBLIC_BASE_URL` | 必须 `https://`；当前直连形态需显式 `ALLOW_INSECURE_BASE_URL=true`（或按入口写 console/npm/pypi），启动时对每个被豁免的入口单独打印明文告警 |
 | Node.js | ≥ 22.5 |
 | `DATA_DIR` | 可创建且可写 |
 | `QUARANTINE_DIR` | 独立挂载时须存在且可写 |
@@ -253,6 +256,8 @@ sudo -u yuanjian AUDIT_DUMP_DIR=/var/lib/yuanjian/audit-dump \
 1. **摘流（可选）**：直连形态无网关维护块。需严格摘流时，临时用防火墙拦截 3000 端口新连接（保留 established 连接让在途请求完成）；内网低峰窗口也可直接进入第 3 步。
 2. **备份**：执行 `backup.sh`（升级前必做）。
 3. **停机**：`sudo systemctl stop yuanjian`。SIGTERM 触发 A-07 优雅停机：在途请求排空（宽限 25s + 看门狗 35s），排空期间新请求收到 503 + `Retry-After: 5`；`journalctl -u yuanjian` 确认停机完成日志。
+   - 排空完成会撤掉硬超时看门狗，进程自然退出（`code=exited, status=0/SUCCESS`），日志只出现「在途请求已排空」。
+   - 真出现 `优雅停机超过 35000ms ... 强制退出` 时也是退出码 0：停机是预期动作，用非 0 退出码会让 systemd 把滚动重启记成崩溃。看到这条日志说明有长连接/慢请求未释放，属于要排查的信号（通常是客户端没遵守 `Cache-Control`/keep-alive 或反向代理没摘流）。
 4. **替换**：`install-offline.sh <新交付目录> /opt/yuanjian --force`，旧目录保留为 `app.pre-install-<时间戳>`。
 5. **启动**：`sudo systemctl start yuanjian`，轮询 `http://127.0.0.1:3000/api/v1/health` 为 200，回滚防火墙摘流规则。
 6. **记录**：维护起止时间入值守记录（`YuanjianRestarted` 告警会计数，属预期）。

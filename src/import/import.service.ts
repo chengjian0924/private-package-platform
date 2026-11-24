@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import * as fsp from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { ApiError } from '../common/errors';
-import { nowIso, sha256Hex } from '../common/http.util';
+import { nowIso, sha256File, sha256Hex } from '../common/http.util';
 import { DatabaseService } from '../db/database.service';
 import {
   parseSdistFilename,
@@ -130,6 +130,11 @@ export class ImportService {
   /**
    * 「只上传包」入口：从包文件自身识别包名/版本，自动生成清单条目并直接绑定文件。
    * 识别不了的单个文件只进 failed，不影响同批其它文件；后续校验/入库与清单流程完全一致。
+   *
+   * 幂等：manifest_hash 由「文件内容 sha256 + 包身份 + 运行时目标」算出，
+   * 同一个人重复提交同一批包（双击、浏览器重发、网络重试）会命中同一批在途批次，
+   * 不会重复落盘、重复扫描。已结束的批次不复用——那多半是「删了版本想重导」，
+   * 交给版本查重给出明确提示，比静默返回旧批次更容易理解。
    */
   async createBatchFromFiles(input: { files: UploadFileInput[]; operatorId: string }) {
     const cfg = getConfig();
@@ -138,6 +143,8 @@ export class ImportService {
       ecosystem: Ecosystem;
       name: string;
       version: string;
+      sha256: string;
+      sizeBytes: number;
       file: UploadFileInput;
     }[] = [];
     const failed: { filename: string; reason: string }[] = [];
@@ -153,7 +160,10 @@ export class ImportService {
         });
       }
       try {
-        identified.push({ ...(await this.identifyPackageFile(file)), file });
+        const identity = await this.identifyPackageFile(file);
+        // 内容指纹：文件内容才是「同一批包」的真正标识，文件名+版本相同但内容被重新打包时必须区分开
+        const sha256 = file.path ? await sha256File(file.path) : sha256Hex(file.buffer as Buffer);
+        identified.push({ ...identity, sha256, sizeBytes: size, file });
       } catch (err) {
         failed.push({ filename: file.filename, reason: (err as Error).message });
       }
@@ -168,12 +178,45 @@ export class ImportService {
     if (identified.some((i) => i.ecosystem === 'npm') && cfg.defaults.node) targets.node = cfg.defaults.node;
     if (identified.some((i) => i.ecosystem === 'pypi') && cfg.defaults.python) targets.python = cfg.defaults.python;
 
+    // 排序后再摘要：同内容不同上传顺序应算同一批，否则「先传 A 再传 B」与「先 B 后 A」会被当成两批
+    const fingerprint = identified
+      .map((i) => [i.filename, i.ecosystem, i.name, i.version, i.sha256, i.sizeBytes])
+      .sort((a, b) => String(a[0]).localeCompare(String(b[0])) || String(a[4]).localeCompare(String(b[4])));
+    const manifestHash = sha256Hex(
+      JSON.stringify({ v: 1, targets, items: fingerprint, unrecognized: failed.map((f) => f.filename).sort() }),
+    );
+
+    const existing = this.db.get<BatchRow>(
+      `SELECT * FROM import_batches
+        WHERE manifest_hash = ? AND operator_id = ?
+          AND status IN (?,?,?,?)
+        ORDER BY created_at DESC LIMIT 1`,
+      manifestHash,
+      input.operatorId,
+      BATCH_STATUS.parsed,
+      BATCH_STATUS.validating,
+      BATCH_STATUS.validated,
+      BATCH_STATUS.validatedWithErrors,
+    );
+    if (existing) {
+      const stats = safeJson<{
+        total?: number;
+        preview?: Record<string, unknown>;
+        unrecognized?: { filename: string; reason: string }[];
+      }>(existing.stats, {});
+      this.logger.log(`批次 ${existing.id} 命中幂等去重（manifest_hash=${manifestHash.slice(0, 12)}），复用未结束批次`);
+      return {
+        batchId: existing.id,
+        status: existing.status,
+        preview: stats.preview ?? { total: stats.total ?? 0, byEcosystem: {}, newCount: 0, existingCount: 0, conflictCount: 0 },
+        failed: stats.unrecognized ?? [],
+        deduplicated: true,
+      };
+    }
+
     const id = randomUUID();
     const createdAt = nowIso();
     const ecosystems = new Set(identified.map((i) => i.ecosystem));
-    const manifestHash = sha256Hex(
-      Buffer.from(JSON.stringify(identified.map((i) => [i.filename, i.ecosystem, i.name, i.version]))),
-    );
 
     this.db.run(
       `INSERT INTO import_batches (id, manifest_hash, ecosystem, mode, status, operator_id, targets, stats, manifest_key, created_at)
@@ -225,8 +268,6 @@ export class ImportService {
       throw new ApiError('UPLOAD_EMPTY', { reason: '包文件全部处理失败', failed });
     }
 
-    this.db.run('UPDATE import_batches SET stats = ? WHERE id = ?', JSON.stringify({ total: created.length }), id);
-
     let newCount = 0;
     let existingCount = 0;
     const byEcosystem: Record<string, number> = {};
@@ -236,20 +277,28 @@ export class ImportService {
       else newCount += 1;
     }
 
+    const preview = {
+      total: created.length,
+      byEcosystem,
+      newCount,
+      existingCount,
+      conflictCount: 0,
+      warnings: [] as string[],
+      missingTargets: false,
+      missingTargetFields: [] as string[],
+      targets,
+    };
+    // preview 与未识别文件一并落库：幂等去重命中时直接回放，不必重新识别文件
+    this.db.run(
+      'UPDATE import_batches SET stats = ? WHERE id = ?',
+      JSON.stringify({ total: created.length, autoIdentified: true, preview, unrecognized: failed }),
+      id,
+    );
+
     return {
       batchId: id,
       status: BATCH_STATUS.parsed,
-      preview: {
-        total: created.length,
-        byEcosystem,
-        newCount,
-        existingCount,
-        conflictCount: 0,
-        warnings: [] as string[],
-        missingTargets: false,
-        missingTargetFields: [] as string[],
-        targets,
-      },
+      preview,
       failed,
     };
   }
@@ -400,6 +449,8 @@ export class ImportService {
       ),
     ).length;
     const stats = {
+      // 保留创建阶段的 preview / 未识别清单：幂等在 VALIDATED 状态下命中时要回放同一份预览
+      ...safeJson<Record<string, unknown>>(batch.stats, {}),
       total: items.length,
       valid: validCount,
       invalid: invalidCount,
