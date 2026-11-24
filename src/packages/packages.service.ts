@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import * as semver from 'semver';
 import { ApiError } from '../common/errors';
 import { nowIso } from '../common/http.util';
+import { likeContains } from '../common/sql.util';
 import { DatabaseService, isUniqueViolation } from '../db/database.service';
 import { isValidName, normalizeName, type Ecosystem } from './names';
 import { fallbackPypiVersionKey, pep440VersionKey } from './pep440';
@@ -398,8 +399,8 @@ export class PackagesService {
       args.push(params.ecosystem);
     }
     if (params.q) {
-      where.push('(p.normalized_name LIKE ? OR p.display_name LIKE ?)');
-      args.push(`%${params.q.toLowerCase()}%`, `%${params.q}%`);
+      where.push("(p.normalized_name LIKE ? ESCAPE '\\' OR p.display_name LIKE ? ESCAPE '\\')");
+      args.push(likeContains(params.q.toLowerCase()), likeContains(params.q));
     }
     // 默认只显示仍有在用版本的包；勾选「含已删除」后，本人删除过的包即使版本全删也保留包壳。
     // 管理员要维护全站数据，能看到任何包的删除记录；其他用户只认自己的删除——别人的撤回不该被围观。
@@ -709,11 +710,11 @@ export class PackagesService {
    * total 是匹配总数（不是当页条数），与 npm 搜索协议一致，供客户端正确翻页。
    */
   searchNpm(text: string, size: number, from: number): { objects: Record<string, unknown>[]; total: number } {
-    const likeName = `%${text.toLowerCase()}%`;
-    const likeDisplay = `%${text}%`;
+    const likeName = likeContains(text.toLowerCase());
+    const likeDisplay = likeContains(text);
     const where = `p.ecosystem = 'npm' AND p.status = 'active'
        AND EXISTS (SELECT 1 FROM package_versions v WHERE v.package_id = p.id AND v.status = 'active')
-       AND (p.normalized_name LIKE ? OR p.display_name LIKE ?)`;
+       AND (p.normalized_name LIKE ? ESCAPE '\\' OR p.display_name LIKE ? ESCAPE '\\')`;
 
     // 有 dsh 字段的插件优先（json_valid 短路保护，避免历史脏 metadata 让整条查询失败）
     const isPlugin = `EXISTS (

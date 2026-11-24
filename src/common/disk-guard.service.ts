@@ -10,6 +10,12 @@ export interface DiskThresholds {
   alertPercent: number;
   readonlyPercent: number;
   minFreeBytes: number;
+  /**
+   * 滞回带宽（百分点）。进入告警/只读用原阈值，退出必须回落到阈值以下这么多，
+   * 避免水位在阈值附近抖动时状态反复翻转（只读/告警来回切换会让写入随机失败）。
+   * 缺省 0 表示不做滞回，行为与旧版一致。
+   */
+  hysteresisPercent?: number;
 }
 
 export interface DiskUsage {
@@ -26,11 +32,42 @@ export interface DiskState extends DiskUsage {
 /** 只读模式下仍放行的写入口：登录换取会话、健康检查、指标采集 */
 const EXEMPT_PREFIXES = ['/api/v1/auth', '/api/v1/health', '/metrics'];
 
-/** 纯函数便于边界用例：freeBytes 取 bavail，即非 root 实际可写空间 */
-export function evaluateDiskState(usage: DiskUsage, thresholds: DiskThresholds): DiskMode {
+/**
+ * 纯函数便于边界用例：freeBytes 取 bavail，即非 root 实际可写空间。
+ *
+ * 传入上一个状态即可获得滞回：进入只读看 `readonlyPercent`，退出只读需要
+ * 回落到 `readonlyPercent - hysteresis` 以下（且可用空间补回同样的缓冲）；
+ * 告警同理。这样水位恰好卡在阈值上时状态不会每轮翻转。
+ */
+export function evaluateDiskState(
+  usage: DiskUsage,
+  thresholds: DiskThresholds,
+  previous: DiskMode = 'normal',
+): DiskMode {
   if (usage.totalBytes <= 0) return 'normal';
   const usedPercent = ((usage.totalBytes - usage.freeBytes) / usage.totalBytes) * 100;
-  if (usedPercent >= thresholds.readonlyPercent || usage.freeBytes < thresholds.minFreeBytes) return 'readonly';
+  const hysteresis = Math.max(0, thresholds.hysteresisPercent ?? 0);
+  // 可用空间的滞回量按磁盘总容量的百分点换算，和百分比阈值保持同一量纲
+  const freeHysteresis = (usage.totalBytes * hysteresis) / 100;
+
+  const enterReadonly = usedPercent >= thresholds.readonlyPercent || usage.freeBytes < thresholds.minFreeBytes;
+
+  if (previous === 'readonly') {
+    const leaveReadonly =
+      usedPercent < thresholds.readonlyPercent - hysteresis &&
+      usage.freeBytes >= thresholds.minFreeBytes + freeHysteresis;
+    if (!leaveReadonly) return 'readonly';
+    // 已真正回落到只读阈值以下：按常规重新评估（可能停在告警档）
+    return usedPercent >= thresholds.alertPercent ? 'alert' : 'normal';
+  }
+
+  if (enterReadonly) return 'readonly';
+
+  if (previous === 'alert') {
+    // 告警档需要跌破 alertPercent - hysteresis 才恢复正常
+    return usedPercent >= thresholds.alertPercent - hysteresis ? 'alert' : 'normal';
+  }
+
   if (usedPercent >= thresholds.alertPercent) return 'alert';
   return 'normal';
 }
@@ -61,6 +98,7 @@ export class DiskGuardService implements OnModuleInit, OnModuleDestroy {
       alertPercent: cfg.storage.diskAlertPercent,
       readonlyPercent: cfg.storage.diskReadonlyPercent,
       minFreeBytes: cfg.storage.minFreeBytes,
+      hysteresisPercent: cfg.storage.diskHysteresisPercent,
     };
     await this.refresh();
     this.timer = setInterval(() => {
@@ -79,8 +117,8 @@ export class DiskGuardService implements OnModuleInit, OnModuleDestroy {
     this.sampling = true;
     try {
       const usage = await this.sample();
-      const mode = evaluateDiskState(usage, this.thresholds);
       const previous = this.state.mode;
+      const mode = evaluateDiskState(usage, this.thresholds, previous);
       this.state = {
         mode,
         usedPercent:

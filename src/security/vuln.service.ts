@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { randomUUID, createHash } from 'node:crypto';
 import * as semver from 'semver';
 import { nowIso } from '../common/http.util';
+import { likeContains } from '../common/sql.util';
 import { DatabaseService } from '../db/database.service';
 import { normalizeName, type Ecosystem } from '../packages/names';
 import type { AdvisoryInput, AdvisoryRow, DependencyRef, SecurityFinding, Severity } from './types';
@@ -332,8 +333,9 @@ export class VulnerabilityService {
       args.push(eco);
     }
     if (params.q) {
-      where.push('(package_name LIKE ? OR advisory_id LIKE ? OR title LIKE ?)');
-      args.push(`%${params.q.toLowerCase()}%`, `%${params.q}%`, `%${params.q}%`);
+      where.push("(package_name LIKE ? ESCAPE '\\' OR advisory_id LIKE ? ESCAPE '\\' OR title LIKE ? ESCAPE '\\')");
+      const like = likeContains(params.q);
+      args.push(likeContains(params.q.toLowerCase()), like, like);
     }
     const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const total = this.db.get<{ c: number }>(`SELECT COUNT(*) AS c FROM vulnerability_advisories ${clause}`, ...args)?.c ?? 0;

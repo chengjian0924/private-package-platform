@@ -36,6 +36,22 @@ describe('磁盘水位保护（e2e）', () => {
     expect(evaluateDiskState({ totalBytes: 1000 * GIB, freeBytes: 50 }, thresholds)).toBe('readonly');
   });
 
+  it('滞回：水位在阈值附近抖动时状态不来回翻转', () => {
+    const thresholds = { alertPercent: 85, readonlyPercent: 95, minFreeBytes: 0, hysteresisPercent: 2 };
+    // 94%：进入告警档，但还没跌破只读的退出阈值（93%），保持只读
+    expect(evaluateDiskState({ totalBytes: 1000, freeBytes: 60 }, thresholds, 'readonly')).toBe('readonly');
+    // 92%：跌破 93% 才退出只读；此时仍高于告警线，落到告警档
+    expect(evaluateDiskState({ totalBytes: 1000, freeBytes: 80 }, thresholds, 'readonly')).toBe('alert');
+    // 84%：高于告警退出阈值 83%，保持告警，避免 84↔85 抖动
+    expect(evaluateDiskState({ totalBytes: 1000, freeBytes: 160 }, thresholds, 'alert')).toBe('alert');
+    // 82%：跌破 83% 才恢复
+    expect(evaluateDiskState({ totalBytes: 1000, freeBytes: 180 }, thresholds, 'alert')).toBe('normal');
+
+    // 关闭滞回（0）时，94% 会立刻退出只读——这正是旧行为的抖动来源
+    const noHysteresis = { ...thresholds, hysteresisPercent: 0 };
+    expect(evaluateDiskState({ totalBytes: 1000, freeBytes: 60 }, noHysteresis, 'readonly')).toBe('alert');
+  });
+
   it('达到只读水位后拒绝写入，查询与健康检查仍可用', async () => {
     sampleSpy.mockResolvedValue({ totalBytes: 10 * GIB, freeBytes: Math.floor(0.3 * GIB) });
     await disk.refresh();

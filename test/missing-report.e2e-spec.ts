@@ -145,6 +145,16 @@ describe('缺包自动上报与显式上报（e2e）', () => {
     expect(items.find((item) => item.normalized_name === 'e2e-already-here')).toBeFalsy();
   });
 
+  it('A 兜底：解析不出包名的 /pypi/packages 404 不登记，避免探测噪音污染待补列表', async () => {
+    const before = await listMissing(ctx, '?source=registry');
+    await request(ctx.baseUrl).get('/pypi/packages/favicon.ico').expect(404);
+    await request(ctx.baseUrl).get('/pypi/packages/robots.txt').expect(404);
+
+    const after = await listMissing(ctx, '?source=registry');
+    expect(after.length).toBe(before.length);
+    expect(after.find((item) => item.normalized_name.includes('favicon'))).toBeFalsy();
+  });
+
   it('A 兜底不影响正常 404 响应与客户端错误码', async () => {
     const res = await request(ctx.baseUrl).get('/npm/e2e-plain-404').expect(404);
     expect(res.body.error).toBe('PKG_NOT_FOUND');

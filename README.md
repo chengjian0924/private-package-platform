@@ -105,7 +105,8 @@ npm run start:test# 测试环境：http://localhost:3100，数据目录 data/tes
 | `ALLOW_INSECURE_BASE_URL` | `false` | `false` | 显式豁免生产环境 `http://` 基址（A1）；当前生产为 HTTP 直连形态需设 `true`，切回 TLS 网关后必须改回 `false` |
 | `SESSION_TTL_SEC` | `28800` | `7200` | 会话绝对有效期（秒） |
 | `SESSION_IDLE_TTL_SEC` | `1800` | `900` | 会话空闲超时（秒） |
-| `AUTH_CACHE_TTL_MS` | `5000` | `5000` | 鉴权决策缓存 TTL（毫秒） |
+| `AUTH_CACHE_TTL_MS` | `5000` | `5000` | 鉴权决策缓存 TTL（毫秒）。缓存键含角色，角色变更即时生效，不再有 TTL 内的旧权限窗口 |
+| `API_TOKEN_TTL_DAYS` | `90` | `90` | 新签发 API 令牌的默认有效期（天），`0` 表示不过期；创建/签发界面可选 30/60/90/180/365 天或永不过期，也可用 `expiresInDays` 单独指定，存量令牌不受影响 |
 | `PASSWORD_MIN_LENGTH` | `8` | `8` | 口令最小长度（8–64）；生产环境在 `deploy/.env.production` 中同样设为 `8`；建号初始口令为 16 位随机串 |
 | `LOGIN_MAX_FAILURES` | `5` | `5` | 连续失败达到该次数锁定账号 |
 | `LOGIN_LOCK_MINUTES` | `15` | `15` | 锁定时长（分钟），到期自动解锁 |
@@ -142,7 +143,8 @@ npm run start:test# 测试环境：http://localhost:3100，数据目录 data/tes
 | `SECURITY_SCAN_CONCURRENCY` | `2` | 同左 | 扫描并发闸门 |
 | `SECURITY_MAX_SCAN_QUEUE` | `50` | 同左 | 扫描排队上限，超出返回可重试错误 |
 | `SECURITY_SCAN_TIMEOUT_MS` | `60000` | 同左 | 单次扫描超时，超时按 fail-closed 处理 |
-| `SECURITY_ORPHAN_GRACE_HOURS` | `24` | 同左 | 孤儿对象回收宽限期（小时） |
+| `SECURITY_ORPHAN_GRACE_HOURS` | `6` | 同左 | 孤儿对象回收宽限期（小时，最小 1，更小的值按 1 处理）。**与清扫间隔无关**：间隔决定多久检查一次，宽限期决定无引用对象最早能活多久，实际删除延迟为「宽限期 + 下一个扫描周期」。对象被复用时（同一 sha256 再次上传）会刷新 mtime，因此复用窗口同样受保护 |
+| `SECURITY_ORPHAN_SWEEP_INTERVAL_MS` | `21600000` | 同左 | 孤儿对象自动清扫间隔（毫秒，默认 6 小时），`<=0` 关闭自动清扫、仅保留手动接口 |
 | `SECURITY_BATCH_RETENTION_DAYS` | `7` | 同左 | 批量导入批次与临时文件保留天数 |
 | `SECURITY_MAX_SCAN_FILE_BYTES` | `301989888` | 同左 | 单包可扫描大小上限（≈288MB，与上传硬天花板对齐；低于该值的大包会被 INT-010 拦截） |
 | `SECURITY_MAX_SCAN_ENTRIES` | `5000` | 同左 | 单包可扫描条目上限，超出判定为可疑 |
@@ -161,6 +163,7 @@ npm run start:test# 测试环境：http://localhost:3100，数据目录 data/tes
 | `DISK_ALERT_PERCENT` | `85` | 同左 | `DATA_DIR` 已用百分比告警阈值（A-05） |
 | `DISK_READONLY_PERCENT` | `95` | 同左 | 达到该已用百分比后进入只读，写接口返回 507（A-05） |
 | `DISK_MIN_FREE_BYTES` | `1073741824` | 同左 | 可用空间低于该值时进入只读，避免大共享盘百分比失真（A-05） |
+| `DISK_HYSTERESIS_PERCENT` | `2` | 同左 | 水位滞回带宽（百分点）：退出告警/只读需回落到阈值以下这么多，避免贴阈值抖动；须小于「只读 - 告警」 |
 | `DISK_CHECK_INTERVAL_MS` | `60000` | 同左 | 磁盘水位采样间隔（毫秒） |
 | `SHUTDOWN_GRACE_MS` | `25000` | 同左 | 优雅停机宽限期（毫秒）：等待在途请求完成，超时后交由硬超时退出（A-07） |
 | `SHUTDOWN_HARD_TIMEOUT_MS` | `35000` | 同左 | 收到 `SIGTERM`/`SIGINT` 后的硬超时（毫秒），到时强制 `process.exit(1)`（A-07） |
@@ -228,6 +231,8 @@ curl -s http://127.0.0.1:3000/api/v1/auth/me
 包文件备份由 `BackupScheduler` 驱动（心跳 `BACKUP_HEARTBEAT_MS`，默认每分钟检查一次是否到了配置的间隔）：把 `objects/` 下的包对象**增量复制**到 `BACKUP_DIR`，目录结构与对象存储同构，因此备份文件可直接按 `<sha 前 2 位>/<sha256>` 找回。语义要点：
 
 - **只增不删**。关闭开关或调整间隔都只影响后续行为，备份目录里的文件一个都不动；备份不参与保留期清理，源对象被硬删除后备份仍然保留（这是备份的意义）。
+- **只备份被引用的对象**。上传中断留下的孤儿对象不进备份（备份只增不删，进去就永久占空间），由孤儿对象清扫（`SECURITY_ORPHAN_SWEEP_INTERVAL_MS`，默认 6 小时一轮）回收。
+- **隔离区一并镜像**。隔离样本复制到 `BACKUP_DIR/quarantine/<scanId>/`，隔离区常挂在独立卷，源卷损坏时仍可恢复；该子树按目录结构原样复制，不与对象键（两位十六进制桶）冲突。
 - **幂等**。每轮只补齐备份目录里缺失的对象，大小不一致的会被覆盖修复，重复执行安全。
 - **窗口等于间隔**。备份在扫描轮次里完成，不是上传时同步复制；间隔 60 分钟意味着最坏情况下最近一小时入库的包还没进备份。对备份时效要求更高时把间隔调小。
 - 备份动作写审计（`backup.objects.copy`），只在真正复制了文件时落一条。
@@ -406,7 +411,7 @@ npm test            # 14 个 e2e 套件（78 用例），真实启动 HTTP 服�
 | `test/config.e2e-spec.ts` | 生产配置护栏、HTTP 基址豁免、`BIND_HOST` 收敛 |
 | `test/dictionary.e2e-spec.ts` | 字典管理：分组视图与 env 基线、权限拒绝、保存校验不落库、限流参数保存后即时生效（429）、漏洞扫描开关控制发布拦截与复检、功能开关对普通用户可见、审计落库 |
 | `test/retention.e2e-spec.ts` | 保留期清理：字典下发保留分组与默认值、非法天数拒绝、`0` 关闭清理、超期软删除版本连对象文件/空包壳一并硬删除、保留期内不动、日志清理只删超期日志文件 |
-| `test/backup.e2e-spec.ts` | 包文件备份：默认开启并落到 `<DATA_DIR>/backups`、内容逐字节一致、重复执行幂等、关闭后不再备份且旧备份保留、重新开启补齐、间隔可覆盖且越界拒绝、源对象被硬删后备份仍在 |
+| `test/backup.e2e-spec.ts` | 包文件备份：默认开启并落到 `<DATA_DIR>/backups`、内容逐字节一致、重复执行幂等、关闭后不再备份且旧备份保留、重新开启补齐、间隔可覆盖且越界拒绝、孤儿对象不进备份、隔离区镜像到 `quarantine/` 子树、源对象被硬删后备份仍在 |
 | `test/package-delete.e2e-spec.ts` | 版本级删除与恢复：reader 与同角色他人删不了、管理员可代删代恢复（审计标记 `deletedByAdmin` / `restoredByAdmin`）、删除后同包其它版本不受影响、已删除版本只对上传者与管理员可见（他人勾选「含已删除」也看不到、装不了）、删除后同版本重传被拒、保留期统计按角色隔离 |
 | `test/http-security.e2e-spec.ts` | 安全响应头、限流、metrics token |
 | `test/logger.e2e-spec.ts` | JSON 日志、traceId、凭据脱敏 |

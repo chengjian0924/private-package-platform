@@ -19,7 +19,7 @@ export const ERROR_DEFS: Record<string, ErrorDef> = {
   AUTH_UNAUTHENTICATED: { status: 401, message: '未登录或登录已失效，请重新登录' },
   AUTH_FORBIDDEN: { status: 403, message: '当前账号无权执行该操作' },
   AUTH_SESSION_EXPIRED: { status: 401, message: '登录态已过期，请重新登录' },
-  AUTH_TOKEN_INVALID: { status: 401, message: '访问令牌无效或已吊销' },
+  AUTH_TOKEN_INVALID: { status: 401, message: '访问令牌无效、已吊销或已过期' },
   AUTH_USER_DISABLED: { status: 403, message: '账号已被禁用，请联系管理员' },
   AUTH_ROLE_REQUIRED: { status: 403, message: '角色权限不足' },
   // 本地账号认证：凭证错误与锁定分开，前端才能提示剩余锁定时间

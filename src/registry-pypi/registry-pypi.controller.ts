@@ -18,7 +18,7 @@ import { clientIp, parseBasicAuth, bearerToken, randomToken } from '../common/ht
 import { AuditService } from '../audit/audit.service';
 import { AuthService } from '../auth/auth.service';
 import { getConfig } from '../config/config';
-import { MissingService, versionFromMissedFilename } from '../missing/missing.service';
+import { MissingService } from '../missing/missing.service';
 import { parseSdistFilename, parseWheelFilename, validatePypiPackage } from '../packages/package-validator';
 import { PackagesService } from '../packages/packages.service';
 import { StorageService } from '../storage/storage.service';
@@ -112,9 +112,14 @@ export class RegistryPypiController {
       const filename = sub.slice('/packages/'.length).replace(/^\//, '');
       const version = this.packages.findVersionByFilename('pypi', filename);
       if (!version) {
-        // 从文件名尽力还原包名与版本：wheel / sdist 都能解析，失败则退回文件名本身
+        // 缺包上报只认「能解析出包名与版本、且该版本本地确实不存在」的请求：
+        // - 文件名解析不出的（favicon 探测、残缺路径）不是依赖，登记只会污染待补列表；
+        // - 版本已入库但文件名不同（pip 探测另一个平台标签的 wheel 变体）不是缺包，
+        //   真实缺的是这个构件而已，登记成「缺这个版本」反而是假阳性。
         const parsed = parseWheelFilename(filename) ?? parseSdistFilename(filename);
-        this.noteMiss(req, parsed?.name ?? filename, versionFromMissedFilename('pypi', filename));
+        if (parsed && !this.packages.findVersion('pypi', parsed.name, parsed.version)) {
+          this.noteMiss(req, parsed.name, parsed.version);
+        }
         throw new ApiError('PKG_NOT_FOUND', { filename });
       }
       res.setHeader('Content-Type', 'application/octet-stream');

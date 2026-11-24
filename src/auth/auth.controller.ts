@@ -35,6 +35,19 @@ interface UpdateUserBody {
   email?: string;
 }
 
+/**
+ * 令牌有效期入参：省略表示用配置默认值，0 表示明确不过期。
+ * 上限 10 年，挡住误传的天文数字（等同于不过期，却看起来像设了期限）。
+ */
+function parseTokenTtl(raw: unknown): number | undefined {
+  if (raw === undefined || raw === null || raw === '') return undefined;
+  const days = Number(raw);
+  if (!Number.isFinite(days) || days < 0 || days > 3650) {
+    throw new ApiError('SYS_VALIDATION', { field: 'expiresInDays' });
+  }
+  return Math.round(days);
+}
+
 @Controller()
 export class AuthController {
   constructor(
@@ -333,11 +346,15 @@ export class AuthController {
   @HttpCode(201)
   @UseGuards(AuthGuard)
   @RequirePermission('user:manage')
-  issueUserToken(@Req() req: AuthedRequest, @Param('id') id: string, @Body() body: { name?: string }) {
+  issueUserToken(
+    @Req() req: AuthedRequest,
+    @Param('id') id: string,
+    @Body() body: { name?: string; expiresInDays?: number },
+  ) {
     const target = this.auth.findUserById(id);
     if (!target) throw new ApiError('SYS_NOT_FOUND', { resource: 'user' });
     const name = (body?.name || `ci-${target.username}`).slice(0, 80);
-    const created = this.auth.createApiToken(target.id, name);
+    const created = this.auth.createApiToken(target.id, name, parseTokenTtl(body?.expiresInDays));
     this.audit.log({
       traceId: req.traceId,
       actorId: req.user!.id,
@@ -346,7 +363,7 @@ export class AuthController {
       resourceId: name,
       result: 'success',
       ip: clientIp(req),
-      detail: { name, targetUserId: target.id, targetUsername: target.username, accountType: target.accountType },
+      detail: { name, targetUserId: target.id, targetUsername: target.username, accountType: target.accountType, expiresAt: created.expiresAt },
     });
     return { ...created, notice: '令牌仅在本次响应中展示，请立即写入 CI 密文变量' };
   }
@@ -382,9 +399,9 @@ export class AuthController {
   @Post('api/v1/auth/tokens')
   @UseGuards(AuthGuard)
   @RequirePermission('token:manage')
-  createToken(@Req() req: AuthedRequest, @Body() body: { name?: string }) {
+  createToken(@Req() req: AuthedRequest, @Body() body: { name?: string; expiresInDays?: number }) {
     const name = (body?.name || 'cli-token').slice(0, 80);
-    const created = this.auth.createApiToken(req.user!.id, name);
+    const created = this.auth.createApiToken(req.user!.id, name, parseTokenTtl(body?.expiresInDays));
     this.audit.log({
       traceId: req.traceId,
       actorId: req.user!.id,
@@ -393,7 +410,7 @@ export class AuthController {
       resourceId: name,
       result: 'success',
       ip: clientIp(req),
-      detail: { name },
+      detail: { name, expiresAt: created.expiresAt },
     });
     return { ...created, notice: '令牌仅在创建时展示一次，请立即保存' };
   }

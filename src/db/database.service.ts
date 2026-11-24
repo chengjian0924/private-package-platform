@@ -55,6 +55,8 @@ CREATE TABLE IF NOT EXISTS api_tokens (
   name TEXT,
   created_at TEXT NOT NULL,
   last_used_at TEXT,
+  -- 令牌到期时间；NULL 表示不过期（加列前的存量令牌都按此处理）
+  expires_at TEXT,
   revoked_at TEXT,
   revoke_reason TEXT
 );
@@ -383,6 +385,8 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
     this.ensureColumn('missing_dependencies', 'auth_present', 'INTEGER NOT NULL DEFAULT 0');
     // 令牌吊销原因：区分手动吊销/批量清理/账号删除，便于审计回溯（存量记录为 NULL，视为手动）
     this.ensureColumn('api_tokens', 'revoke_reason', 'TEXT');
+    // 令牌有效期：老库补列后存量令牌 expires_at 为 NULL，语义是永不过期，不会被误判失效
+    this.ensureColumn('api_tokens', 'expires_at', 'TEXT');
 
     // PyPI 版本键改为 PEP 440 相等语义：存量 1.0 / 1.0.0 需在启动时收敛，
     // 否则 findVersion('1.0') 查不到旧库的 1.0.0，出现「同一个包装两次」。

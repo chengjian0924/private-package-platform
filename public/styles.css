@@ -949,6 +949,8 @@ html[data-theme="dark"] .theme-toggle .icon-sun { display: block; }
 }
 .input:disabled { background: var(--bg-subtle); color: var(--muted); cursor: not-allowed; }
 .input.narrow { min-width: 138px; }
+/* 签发令牌弹窗：名称、有效期、按钮要挤在同一行，名称输入允许收缩而不是把按钮顶下去 */
+#token-issue-form > .input:not(.narrow) { flex: 1 1 150px; min-width: 120px; }
 input.input[type="file"] { padding: 6px 10px; line-height: 1.6; }
 
 select.input {

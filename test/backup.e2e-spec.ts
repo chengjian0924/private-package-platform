@@ -122,6 +122,37 @@ describe('包文件备份（e2e）', () => {
     expect(getConfig().backup.intervalMinutes).toBe(60);
   });
 
+  it('孤儿对象不进备份，隔离区样本会被镜像到备份目录', async () => {
+    const cfg = getConfig();
+
+    // 手工造一个符合对象键格式、但没有任何版本引用的孤儿对象
+    const orphanSha = 'f'.repeat(64);
+    const orphanDir = path.join(cfg.objectDir, orphanSha.slice(0, 2));
+    fs.mkdirSync(orphanDir, { recursive: true });
+    fs.writeFileSync(path.join(orphanDir, orphanSha), 'orphan-payload');
+
+    // 隔离区造一个待处置样本
+    const quarantineFile = path.join(cfg.security.quarantineDir, 'scan-e2e-quarantine', 'sample.tgz');
+    fs.mkdirSync(path.dirname(quarantineFile), { recursive: true });
+    fs.writeFileSync(quarantineFile, 'quarantined-payload');
+
+    const result = await backup.runSweep();
+    expect(result.failed).toBe(0);
+    expect(result.orphanSkipped).toBeGreaterThanOrEqual(1);
+    expect(result.quarantineCopied).toBeGreaterThanOrEqual(1);
+
+    // 孤儿对象不复制，避免垃圾被永久固化进备份
+    expect(fs.existsSync(path.join(cfg.backup.dir, orphanSha.slice(0, 2), orphanSha))).toBe(false);
+    // 隔离样本原样镜像到备份目录的 quarantine 子树
+    const backedUp = path.join(cfg.backup.dir, 'quarantine', 'scan-e2e-quarantine', 'sample.tgz');
+    expect(fs.existsSync(backedUp)).toBe(true);
+    expect(fs.readFileSync(backedUp, 'utf8')).toBe('quarantined-payload');
+
+    // 再跑一轮幂等：已备份的不重复计数
+    const again = await backup.runSweep();
+    expect(again.quarantineCopied).toBe(0);
+  });
+
   it('源对象被硬删后，备份仍然独立存在', async () => {
     const storage = ctx.app.get(StorageService);
     expect(await storage.deleteObject(shaA)).toBe(true);

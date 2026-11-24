@@ -2315,9 +2315,30 @@
     return isAdmin() && $('token-scope') ? $('token-scope').value : 'self';
   }
 
-  /** 状态筛选：默认只看有效令牌，已吊销的收纳在「全部状态 / 已吊销」里 */
+  /** 状态筛选：默认只看有效令牌，已过期/已吊销的各自收纳 */
   function tokenStatus() {
     return $('token-status') ? $('token-status').value : 'active';
+  }
+
+  /**
+   * 到期判定放在前端：后端只在令牌被使用时才把它标成 revoked(expired)，
+   * 长期没人用的过期令牌会一直停在「有效」状态，光看 revoked_at 会误判。
+   */
+  function tokenExpired(t) {
+    return !!t.expires_at && new Date(t.expires_at).getTime() <= Date.now();
+  }
+
+  /** 逾期提示：<=7 天标橙提醒轮换，永不过期单独说明 */
+  function tokenExpiryHint(t) {
+    if (!t.expires_at) return '<div class="small muted nowrap">永不过期</div>';
+    var d = new Date(t.expires_at);
+    var days = Math.ceil((d.getTime() - Date.now()) / 86400000);
+    var pad = function (n) { return n < 10 ? '0' + n : String(n); };
+    var date = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+    if (days <= 7) {
+      return '<div class="small nowrap" style="color:var(--warn,#c47f17)">' + days + ' 天后到期</div>';
+    }
+    return '<div class="small muted nowrap">' + date + ' 到期</div>';
   }
 
   /**
@@ -2326,9 +2347,12 @@
    */
   function tokenMatches(t) {
     var revoked = !!t.revoked_at;
+    // 已吊销优先归类：吊销后又到期不该同时出现在两个筛选里
+    var expired = !revoked && tokenExpired(t);
     var st = tokenStatus();
-    if (st === 'active' && revoked) return false;
+    if (st === 'active' && (revoked || expired)) return false;
     if (st === 'revoked' && !revoked) return false;
+    if (st === 'expired' && !expired) return false;
     var input = $('token-filter');
     var kw = input ? input.value.trim().toLowerCase() : '';
     if (!kw) return true;
@@ -2344,8 +2368,14 @@
     applyLocalPaged('token', filtered);
     renderTokensPage(pageSlice('token'));
     if ($('token-list-sub')) {
-      var revokedCount = raw.filter(function (t) { return !!t.revoked_at; }).length;
-      var text = '共 ' + raw.length + ' 个令牌 · 有效 ' + (raw.length - revokedCount);
+      var revokedCount = 0;
+      var expiredCount = 0;
+      raw.forEach(function (t) {
+        if (t.revoked_at) revokedCount++;
+        else if (tokenExpired(t)) expiredCount++;
+      });
+      var text = '共 ' + raw.length + ' 个令牌 · 有效 ' + (raw.length - revokedCount - expiredCount);
+      if (expiredCount) text += ' · 已过期 ' + expiredCount;
       if (revokedCount) text += ' · 已吊销 ' + revokedCount;
       if (filtered.length !== raw.length) text += ' ｜ 当前显示 ' + filtered.length + ' 个';
       $('token-list-sub').textContent = text;
@@ -2360,7 +2390,7 @@
       .map(function (t) {
         var revoked = !!t.revoked_at;
         // 吊销原因直接显示：运维排查时，「手动吊销」和「批量清理」对应完全不同的处理路径
-        var reasonShort = { manual: '手动', bulk_revoke: '批量', admin_revoke: '管理员' }[t.revoke_reason] || '';
+        var reasonShort = { manual: '手动', bulk_revoke: '批量', admin_revoke: '管理员', expired: '过期' }[t.revoke_reason] || '';
         // 归属账号：机器账号带 CI 标签，禁用账号标出来，避免管理员误判「令牌还有效」
         var owner = showOwner
           ? '<td class="small">' + esc(t.username) +
@@ -2368,14 +2398,20 @@
             (t.user_status === 'disabled' ? ' <span class="pill warn">已禁用</span>' : '') +
             '</td>'
           : '';
+        var expired = !revoked && tokenExpired(t);
+        var dead = revoked || expired;
+        // 状态列与到期提示合并展示：有效令牌下方标到期日，临期 7 天内变橙
+        var statusCell = revoked
+          ? '<span class="pill muted">已吊销' + (reasonShort ? ' · ' + reasonShort : '') + '</span>'
+          : expired
+            ? '<span class="pill warn">已过期</span>'
+            : '<span class="pill ok">有效</span>' + tokenExpiryHint(t);
         return (
           '<tr><td>' + esc(t.name) + '</td>' + owner +
           '<td class="small nowrap">' + fmtTime(t.created_at) +
           '</td><td class="small nowrap">' + fmtTime(t.last_used_at) + '</td><td>' +
-          (revoked
-            ? '<span class="pill muted">已吊销' + (reasonShort ? ' · ' + reasonShort : '') + '</span>'
-            : '<span class="pill ok">有效</span>') +
-          '</td><td>' + (revoked ? '' :
+          statusCell +
+          '</td><td>' + (dead ? '' :
             '<button class="btn ghost small" data-hash="' + esc(t.token_hash) + '" data-owner="' +
             esc(t.username || '') + '" data-name="' + esc(t.name) + '">吊销</button>') +
           '</td></tr>'
@@ -2386,8 +2422,11 @@
     if (empty) {
       empty.classList.toggle('hidden', (pageCache.token || []).length > 0);
       var rawCount = (pageCache.tokenRaw || []).length;
+      var st = tokenStatus();
       if (!rawCount) empty.textContent = '尚无访问令牌。';
-      else if (tokenStatus() === 'active') empty.textContent = '没有有效的令牌，已吊销的可切到「已吊销」查看。';
+      else if (st === 'active') empty.textContent = '没有有效的令牌，可切到「已过期 / 已吊销」查看。';
+      else if (st === 'expired') empty.textContent = '没有已过期的令牌。';
+      else if (st === 'revoked') empty.textContent = '没有已吊销的令牌。';
       else empty.textContent = '没有匹配的令牌，换个关键字试试。';
     }
     tbody.querySelectorAll('button[data-hash]').forEach(function (btn) {
@@ -2397,29 +2436,60 @@
     });
   }
 
+  /**
+   * 有效期下拉：空值表示「跟随服务端默认」（不发这个字段），
+   * 0 表示明确不过期——需要二次确认，长期凭据泄露后没有自然失效兜底。
+   */
+  function readTokenTtl(selectId) {
+    var el = $(selectId);
+    if (!el || el.value === '') return { days: undefined, never: false };
+    var days = Number(el.value);
+    return { days: days, never: days === 0 };
+  }
+
+  function confirmNeverExpire(name) {
+    return confirmAction({
+      title: '生成永不过期的令牌',
+      message:
+        '「' + name + '」将不会自动失效。\n\n长期凭据一旦泄露会一直有效，建议优先选择有限期限；' +
+        '确需长期使用时，请存放在流水线密文变量里并定期轮换。',
+      confirmText: '仍然创建',
+    });
+  }
+
   function createToken() {
     var name = $('token-name').value.trim();
     if (!name) {
       showToast('请填写令牌名称', 'err');
       return;
     }
-    setButtonLoading($('token-create'), true);
-    api('/api/v1/auth/tokens', { method: 'POST', body: { name: name } })
-      .then(function (data) {
-        $('token-result').innerHTML =
-          '<div>令牌仅展示一次，请立即保存：</div>' +
-          '<div class="token-line"><code>' + esc(data.token) + '</code>' +
-          '<button type="button" class="btn small" data-copy="' + esc(data.token) +
-          '" data-copy-label="访问令牌">复制</button></div>';
-        $('token-result').classList.remove('hidden');
-        $('token-name').value = '';
-        showToast('令牌创建成功', 'ok');
-        loadTokens();
-      })
-      .catch(reportError)
-      .finally(function () {
-        setButtonLoading($('token-create'), false);
-      });
+    var ttl = readTokenTtl('token-ttl');
+    // 永不过期是显式风险选择，确认后才发请求；其余情况直接创建
+    (ttl.never ? confirmNeverExpire(name) : Promise.resolve(true)).then(function (ok) {
+      if (!ok) return;
+      setButtonLoading($('token-create'), true);
+      var body = { name: name };
+      if (ttl.days !== undefined) body.expiresInDays = ttl.days;
+      api('/api/v1/auth/tokens', { method: 'POST', body: body })
+        .then(function (data) {
+          var expiry = data.expiresAt
+            ? '<div class="small">有效期至 ' + esc(fmtTime(data.expiresAt)) + '，到期后自动失效。</div>'
+            : '<div class="small">该令牌永不过期，请妥善保管。</div>';
+          $('token-result').innerHTML =
+            '<div>令牌仅展示一次，请立即保存：</div>' +
+            '<div class="token-line"><code>' + esc(data.token) + '</code>' +
+            '<button type="button" class="btn small" data-copy="' + esc(data.token) +
+            '" data-copy-label="访问令牌">复制</button></div>' + expiry;
+          $('token-result').classList.remove('hidden');
+          $('token-name').value = '';
+          showToast('令牌创建成功', 'ok');
+          loadTokens();
+        })
+        .catch(reportError)
+        .finally(function () {
+          setButtonLoading($('token-create'), false);
+        });
+    });
   }
 
   function revokeToken(hash, owner, name) {
@@ -2721,6 +2791,8 @@
     $('token-issue-modal-title').textContent = '为 ' + username + ' 签发令牌';
     // 账号名已带 ci- 前缀时不再重复拼，避免出现 ci-ci-xxx
     $('token-issue-name').value = username.indexOf('ci-') === 0 ? username : 'ci-' + username;
+    // 每次打开重置为「跟随默认」：令牌有效期是要主动做的决定，不继承上一次
+    if ($('token-issue-ttl')) $('token-issue-ttl').value = '';
     $('token-issue-modal').classList.remove('hidden');
     $('token-issue-name').focus();
   }
@@ -2732,20 +2804,30 @@
       showToast('请填写令牌名称', 'err');
       return;
     }
-    setButtonLoading($('token-issue-confirm'), true);
-    api('/api/v1/users/' + encodeURIComponent(issueTarget.id) + '/tokens', {
-      method: 'POST',
-      body: { name: name },
-    })
-      .then(function (data) {
-        $('token-issue-modal').classList.add('hidden');
-        showCredential('令牌已签发 · ' + issueTarget.username, data.token, '访问令牌', data.notice);
-        showToast('令牌签发成功', 'ok');
+    var ttl = readTokenTtl('token-issue-ttl');
+    (ttl.never ? confirmNeverExpire(name) : Promise.resolve(true)).then(function (ok) {
+      if (!ok) return;
+      setButtonLoading($('token-issue-confirm'), true);
+      var body = { name: name };
+      if (ttl.days !== undefined) body.expiresInDays = ttl.days;
+      api('/api/v1/users/' + encodeURIComponent(issueTarget.id) + '/tokens', {
+        method: 'POST',
+        body: body,
       })
-      .catch(reportError)
-      .finally(function () {
-        setButtonLoading($('token-issue-confirm'), false);
-      });
+        .then(function (data) {
+          $('token-issue-modal').classList.add('hidden');
+          var expiry = data.expiresAt
+            ? '有效期至 ' + fmtTime(data.expiresAt) + '，到期后自动失效。'
+            : '该令牌永不过期，请妥善保管。';
+          showCredential('令牌已签发 · ' + issueTarget.username, data.token, '访问令牌',
+            (data.notice ? data.notice + ' ' : '') + expiry);
+          showToast('令牌签发成功', 'ok');
+        })
+        .catch(reportError)
+        .finally(function () {
+          setButtonLoading($('token-issue-confirm'), false);
+        });
+    });
   }
 
   // ---------- 批量建号 ----------

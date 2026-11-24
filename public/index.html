@@ -462,6 +462,16 @@
               <svg class="icon search-icon"><use href="#i-key"></use></svg>
               <input id="token-name" class="input" placeholder="令牌名称，如 ci-pipeline" aria-label="令牌名称" />
             </div>
+            <select id="token-ttl" class="input narrow" aria-label="令牌有效期"
+              title="令牌到期后自动失效；CI 长期凭据建议选较长期限并定期轮换">
+              <option value="">有效期：跟随默认</option>
+              <option value="30">30 天</option>
+              <option value="60">60 天</option>
+              <option value="90">90 天</option>
+              <option value="180">180 天</option>
+              <option value="365">365 天</option>
+              <option value="0">永不过期</option>
+            </select>
             <button type="button" id="token-create" class="btn primary">
               <svg class="icon"><use href="#i-plus"></use></svg>生成令牌
             </button>
@@ -486,6 +496,7 @@
             <select id="token-status" class="input narrow" aria-label="按令牌状态筛选">
               <option value="all">全部状态</option>
               <option value="active" selected>仅有效</option>
+              <option value="expired">已过期</option>
               <option value="revoked">已吊销</option>
             </select>
             <select id="token-scope" class="input narrow hidden" aria-label="令牌范围">
@@ -839,6 +850,16 @@ twine upload --repository-url http://&lt;host&gt;:3000/pypi/ dist/*</code></pre>
       <div class="modal-body">
         <div class="row" id="token-issue-form">
           <input id="token-issue-name" class="input" placeholder="令牌名称，如 ci-group-repo" aria-label="令牌名称" />
+          <select id="token-issue-ttl" class="input narrow" aria-label="令牌有效期"
+            title="令牌到期后自动失效；CI 长期凭据建议选较长期限并定期轮换">
+            <option value="">有效期：跟随默认</option>
+            <option value="30">30 天</option>
+            <option value="60">60 天</option>
+            <option value="90">90 天</option>
+            <option value="180">180 天</option>
+            <option value="365">365 天</option>
+            <option value="0">永不过期</option>
+          </select>
           <button type="button" id="token-issue-confirm" class="btn primary">
             <svg class="icon"><use href="#i-key"></use></svg>签发
           </button>

@@ -22,7 +22,7 @@
 | --- | --- | --- |
 | 实现 | `src/maintenance/backup.service.ts` + `backup.scheduler.ts` | `scripts/backup.sh` + `restore.sh` |
 | 启动 | **随 console 进程自动启动**，无需人工干预；心跳 60s，按间隔执行 | **需人工启动**（装 cron 或执行一次） |
-| 备份内容 | 仅把对象存储 `objects/` 的包文件增量复制到备份目录 | SQLite 一致性快照 + `objects/`/`meta/`/`batches/` 打包成 `yuanjian-<时间戳>.tar.gz` |
+| 备份内容 | 把对象存储 `objects/` 中被版本引用的包文件增量复制到备份目录，并把隔离区镜像到 `quarantine/` 子树 | SQLite 一致性快照 + `objects/`/`meta/`/`batches/` 打包成 `yuanjian-<时间戳>.tar.gz` |
 | 落盘位置 | `<dataDir>/backups`（默认，容器内），纯包文件副本 | `/srv/yuanjian-backups`（宿主，容器内挂 `/backups`），可直接用于恢复 |
 | 默认开关 | `BACKUP_ENABLED=true`（env），运行时可被字典覆盖 | 无内置开关，由是否安装定时任务决定 |
 | 能否恢复 | 不能单独恢复，缺 `platform.db` 与元数据 | **完整可恢复**（推荐作为正式备份） |

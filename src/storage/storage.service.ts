@@ -70,7 +70,14 @@ export class StorageService implements OnModuleInit {
       .then((s) => s.isFile())
       .catch(() => false);
 
-    if (!exists) {
+    if (exists) {
+      // 内容寻址去重：同一 sha256 已存在就不再重写，但必须刷新 mtime。
+      // 孤儿清扫按「无引用 且 mtime 早于宽限期」判定；对象复用时若 mtime 还是
+      // 很久以前创建的时间，它会在本次上传拿到底层文件、DB 尚未提交的窗口里
+      // 被扫走，导致入库成功但文件已不存在。utimes 失败不影响上传。
+      const now = new Date();
+      await fsp.utimes(absPath, now, now).catch(() => undefined);
+    } else {
       await fsp.mkdir(path.dirname(absPath), { recursive: true });
       const tmpFile = path.join(this.tmpDir, `upload-${randomToken(8)}`);
       try {

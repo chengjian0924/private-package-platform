@@ -22,8 +22,10 @@ export class SecurityScheduler implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger('SecurityScheduler');
   private timer: NodeJS.Timeout | null = null;
   private purgeTimer: NodeJS.Timeout | null = null;
+  private orphanTimer: NodeJS.Timeout | null = null;
   private running = false;
   private purging = false;
+  private sweeping = false;
 
   constructor(private readonly security: SecurityService) {}
 
@@ -43,15 +45,32 @@ export class SecurityScheduler implements OnModuleInit, OnModuleDestroy {
     const purgeInterval = getConfig().security.quarantinePurgeIntervalMs;
     if (!Number.isFinite(purgeInterval) || purgeInterval <= 0) {
       this.logger.log('隔离样本超期销毁已关闭（QUARANTINE_PURGE_INTERVAL_MS <= 0）');
-      return;
-    }
-    // 先跑一次：进程按天重启时，只靠 setInterval 永远等不到第一次触发
-    void this.purgeTick();
-    this.purgeTimer = setInterval(() => {
+    } else {
+      // 先跑一次：进程按天重启时，只靠 setInterval 永远等不到第一次触发
       void this.purgeTick();
-    }, purgeInterval);
-    this.purgeTimer.unref();
-    this.logger.log(`隔离样本超期销毁已启用，间隔 ${purgeInterval} 毫秒`);
+      this.purgeTimer = setInterval(() => {
+        void this.purgeTick();
+      }, purgeInterval);
+      this.purgeTimer.unref();
+      this.logger.log(`隔离样本超期销毁已启用，间隔 ${purgeInterval} 毫秒`);
+    }
+
+    // 孤儿对象清扫：对象先落盘、DB 后写入，失败会留下无引用文件；
+    // 仅靠手动接口在长跑环境里永远没人点。宽限期（orphanGraceHours）由清扫逻辑
+    // 内保证，未入库的新上传不会被误删。
+    const orphanInterval = getConfig().security.orphanSweepIntervalMs;
+    if (!Number.isFinite(orphanInterval) || orphanInterval <= 0) {
+      this.logger.log('孤儿对象自动清扫已关闭（SECURITY_ORPHAN_SWEEP_INTERVAL_MS <= 0）');
+    } else {
+      void this.orphanTick();
+      this.orphanTimer = setInterval(() => {
+        void this.orphanTick();
+      }, orphanInterval);
+      this.orphanTimer.unref();
+      this.logger.log(
+        `孤儿对象自动清扫已启用，间隔 ${orphanInterval} 毫秒（宽限期 ${getConfig().security.orphanGraceHours} 小时）`,
+      );
+    }
   }
 
   onModuleDestroy(): void {
@@ -62,6 +81,29 @@ export class SecurityScheduler implements OnModuleInit, OnModuleDestroy {
     if (this.purgeTimer) {
       clearInterval(this.purgeTimer);
       this.purgeTimer = null;
+    }
+    if (this.orphanTimer) {
+      clearInterval(this.orphanTimer);
+      this.orphanTimer = null;
+    }
+  }
+
+  private async orphanTick(): Promise<void> {
+    if (this.sweeping) return;
+    this.sweeping = true;
+    try {
+      const result = await this.security.sweepOrphans(true);
+      const { orphanObjects, orphanQuarantine, expiredBatchFiles } = result;
+      const total = orphanObjects.count + orphanQuarantine.count + expiredBatchFiles.count;
+      if (total > 0) {
+        this.logger.log(
+          `孤儿对象清扫完成：对象 ${orphanObjects.count}、隔离目录 ${orphanQuarantine.count}、过期批次文件 ${expiredBatchFiles.count}`,
+        );
+      }
+    } catch (err) {
+      this.logger.error(`孤儿对象清扫失败: ${(err as Error).message}`);
+    } finally {
+      this.sweeping = false;
     }
   }
 

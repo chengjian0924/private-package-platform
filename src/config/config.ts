@@ -57,8 +57,14 @@ export interface SecurityConfig {
   maxScanQueue: number;
   /** 单次扫描超时，超时按扫描失败处理（fail-closed） */
   scanTimeoutMs: number;
-  /** 孤儿对象/隔离目录的清理宽限期（小时），避免误删正在写入的文件 */
+  /**
+   * 孤儿对象/隔离目录的清理宽限期（小时），最小 1。
+   * 语义是「无引用多久后才允许删」，与 orphanSweepIntervalMs（多久检查一次）相互独立；
+   * 对象被复用时刷新 mtime，所以「已存在很久但刚被复用」的对象同样受保护。
+   */
   orphanGraceHours: number;
+  /** 孤儿对象自动清扫间隔（毫秒），<=0 表示关闭自动清扫、只保留手动接口 */
+  orphanSweepIntervalMs: number;
   /** 已完成导入批次的文件保留天数，过期后由维护任务回收 */
   batchRetentionDays: number;
   trustedKeys: TrustedKey[];
@@ -114,6 +120,11 @@ export interface AppConfig {
     passwordMinLength: number;
     loginMaxFailures: number;
     loginLockMinutes: number;
+    /**
+     * 新建 API 令牌的默认有效期（天）。0 表示不过期。
+     * 存量令牌在加列前签发，expires_at 为空，按「永不过期」处理，不会被本次升级影响。
+     */
+    apiTokenTtlDays: number;
     bootstrapUsername: string;
     /** 内置管理员与新建管理员的固定初始密码（首登强制改密） */
     initialPasswordAdmin: string;
@@ -189,6 +200,8 @@ export interface AppConfig {
     diskReadonlyPercent: number;
     minFreeBytes: number;
     checkIntervalMs: number;
+    /** 进入/退出阈值的滞回带宽（百分点），避免水位贴阈值时状态反复翻转 */
+    diskHysteresisPercent: number;
   };
   /** 优雅停机：先排空在途请求，超过硬超时强制退出 */
   shutdown: {
@@ -301,6 +314,18 @@ function buildConfig(): void {
   if (diskAlertPercent <= 0 || diskReadonlyPercent > 100 || diskAlertPercent >= diskReadonlyPercent) {
     throw new Error(
       `磁盘水位阈值不合法：DISK_ALERT_PERCENT=${diskAlertPercent}、DISK_READONLY_PERCENT=${diskReadonlyPercent}，需满足 0 < 告警 < 只读 ≤ 100`,
+    );
+  }
+  // 滞回带宽必须小于两档间距，否则退出阈值会跨到另一档，语义就乱了。
+  // 未显式配置时取 2 与「间距 - 1」的较小值：像 99/100 这种紧贴的存量配置
+  // 会自动退化为 0（等价旧行为），不会因为升级后引入新校验而起不来。
+  const gap = diskReadonlyPercent - diskAlertPercent;
+  const hysteresisRaw = (process.env.DISK_HYSTERESIS_PERCENT || '').trim();
+  const diskHysteresisPercent =
+    hysteresisRaw === '' ? Math.min(2, Math.max(0, gap - 1)) : intEnv('DISK_HYSTERESIS_PERCENT', 0);
+  if (diskHysteresisPercent < 0 || diskHysteresisPercent >= gap) {
+    throw new Error(
+      `磁盘滞回带宽不合法：DISK_HYSTERESIS_PERCENT=${diskHysteresisPercent}，需满足 0 ≤ 滞回 < 只读 - 告警（${gap}）`,
     );
   }
 
@@ -423,6 +448,7 @@ function buildConfig(): void {
       passwordMinLength,
       loginMaxFailures,
       loginLockMinutes,
+      apiTokenTtlDays: Math.max(0, intEnv('API_TOKEN_TTL_DAYS', 90)),
       bootstrapUsername: (process.env.BOOTSTRAP_ADMIN_USERNAME || '').trim() || 'admin',
       // 固定初始密码：仅用于建号，首次登录必须改密；不参与强度校验（本身就是一次性弱口令）
       initialPasswordAdmin: process.env.INITIAL_PASSWORD_ADMIN || 'admin123',
@@ -487,6 +513,7 @@ function buildConfig(): void {
       diskReadonlyPercent,
       minFreeBytes: intEnv('DISK_MIN_FREE_BYTES', 1024 * 1024 * 1024),
       checkIntervalMs: intEnv('DISK_CHECK_INTERVAL_MS', 60_000),
+      diskHysteresisPercent,
     },
     shutdown: {
       graceMs: shutdownGraceMs,
@@ -515,7 +542,13 @@ function buildConfig(): void {
       scanConcurrency: intEnv('SECURITY_SCAN_CONCURRENCY', 2),
       maxScanQueue: intEnv('SECURITY_MAX_SCAN_QUEUE', 50),
       scanTimeoutMs: intEnv('SECURITY_SCAN_TIMEOUT_MS', 60_000),
-      orphanGraceHours: intEnv('SECURITY_ORPHAN_GRACE_HOURS', 24),
+      // 宽限期是「无引用多久后才允许删」，与清扫间隔是两件事：间隔只决定多久检查一次，
+      // 宽限期决定对象最早能活多久。设为 0 会让正在上传（对象已落盘、DB 未提交）的文件
+      // 在扫描瞬间被删，故下限固定 1 小时——远大于任何单次上传+扫描耗时。
+      // 默认取一个扫描周期（6 小时）：删除延迟 6~12 小时，既不会误删在途文件，
+      // 也不会让失败上传留下的孤儿在磁盘上压一整天（水位紧张时这点很重要）。
+      orphanGraceHours: Math.max(1, intEnv('SECURITY_ORPHAN_GRACE_HOURS', 6)),
+      orphanSweepIntervalMs: intEnv('SECURITY_ORPHAN_SWEEP_INTERVAL_MS', 6 * 60 * 60 * 1000),
       batchRetentionDays: intEnv('SECURITY_BATCH_RETENTION_DAYS', 7),
       trustedKeys: trustedKeysEnv('SECURITY_TRUSTED_KEYS'),
       // 与上传硬天花板对齐：否则 200MB 包会先被 INT-010 拦截，导致「允许上传」形同虚设

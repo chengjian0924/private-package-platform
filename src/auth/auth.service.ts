@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { getConfig } from '../config/config';
 import { ApiError } from '../common/errors';
 import { addSeconds, nowIso, randomToken, sha256Hex } from '../common/http.util';
+import { likeContains } from '../common/sql.util';
 import { DatabaseService } from '../db/database.service';
 import { hashPassword, validatePasswordStrength, verifyPassword } from './password';
 
@@ -637,27 +638,51 @@ export class AuthService {
 
   // ---------- API 令牌 ----------
 
-  createApiToken(userId: string, name: string): { token: string; name: string; createdAt: string } {
+  /**
+   * 签发 API 令牌。
+   *
+   * 有效期优先用调用方显式传入的 `expiresInDays`（0 表示不过期），未传则取配置默认值
+   * `auth.apiTokenTtlDays`。令牌是长期凭据，没有到期时间就等于永久凭据，泄露后只能靠
+   * 人工发现再吊销；因此默认给一个有限有效期，靠轮换把风险窗口压到可控范围。
+   */
+  createApiToken(
+    userId: string,
+    name: string,
+    expiresInDays?: number,
+  ): { token: string; name: string; createdAt: string; expiresAt: string | null } {
     const token = `yj_${randomToken(24)}`;
     const createdAt = nowIso();
+    const days = expiresInDays ?? getConfig().auth.apiTokenTtlDays;
+    const expiresAt = days > 0 ? addSeconds(createdAt, Math.round(days) * 86400) : null;
     this.db.run(
-      'INSERT INTO api_tokens (token_hash, user_id, name, created_at) VALUES (?,?,?,?)',
+      'INSERT INTO api_tokens (token_hash, user_id, name, created_at, expires_at) VALUES (?,?,?,?,?)',
       sha256Hex(token),
       userId,
       name.slice(0, 80),
       createdAt,
+      expiresAt,
     );
-    return { token, name, createdAt };
+    return { token, name, createdAt, expiresAt };
   }
 
   resolveApiToken(token: string): AuthUser | null {
     if (!token.startsWith('yj_')) return null;
     const hash = sha256Hex(token);
-    const row = this.db.get<{ user_id: string; revoked_at: string | null }>(
-      'SELECT user_id, revoked_at FROM api_tokens WHERE token_hash = ?',
+    const row = this.db.get<{ user_id: string; revoked_at: string | null; expires_at: string | null }>(
+      'SELECT user_id, revoked_at, expires_at FROM api_tokens WHERE token_hash = ?',
       hash,
     );
     if (!row || row.revoked_at) return null;
+    // expires_at 为空表示不过期（加列前的存量令牌）；到期后顺带标记吊销，
+    // 让管理端清单能直接看出失效原因，而不是一直显示「有效但用不了」。
+    if (row.expires_at && new Date(row.expires_at) <= new Date()) {
+      this.db.run(
+        "UPDATE api_tokens SET revoked_at = ?, revoke_reason = 'expired' WHERE token_hash = ? AND revoked_at IS NULL",
+        nowIso(),
+        hash,
+      );
+      return null;
+    }
     const user = this.findUserById(row.user_id);
     if (!user) return null;
     this.db.run('UPDATE api_tokens SET last_used_at = ? WHERE token_hash = ?', nowIso(), hash);
@@ -667,7 +692,7 @@ export class AuthService {
 
   listApiTokens(userId: string): Record<string, unknown>[] {
     return this.db.all(
-      `SELECT token_hash, name, created_at, last_used_at, revoked_at, revoke_reason
+      `SELECT token_hash, name, created_at, expires_at, last_used_at, revoked_at, revoke_reason
          FROM api_tokens WHERE user_id = ? ORDER BY created_at DESC`,
       userId,
     );
@@ -683,11 +708,11 @@ export class AuthService {
     const where: string[] = [];
     const params: string[] = [];
     if (keyword) {
-      where.push('(t.name LIKE ? OR u.username LIKE ? OR u.display_name LIKE ?)');
-      const like = `%${keyword}%`;
+      where.push("(t.name LIKE ? ESCAPE '\\' OR u.username LIKE ? ESCAPE '\\' OR u.display_name LIKE ? ESCAPE '\\')");
+      const like = likeContains(keyword);
       params.push(like, like, like);
     }
-    const sql = `SELECT t.token_hash, t.name, t.created_at, t.last_used_at, t.revoked_at, t.revoke_reason,
+    const sql = `SELECT t.token_hash, t.name, t.created_at, t.expires_at, t.last_used_at, t.revoked_at, t.revoke_reason,
                         t.user_id, u.username, u.display_name, u.role, u.account_type,
                         u.status AS user_status
                    FROM api_tokens t JOIN users u ON u.id = t.user_id
@@ -744,7 +769,9 @@ export class AuthService {
   }
 
   hasPermission(user: AuthUser, permission: string): boolean {
-    const key = `${user.id}:${permission}`;
+    // 缓存键带上角色：会话/令牌每次请求都会从库里取到最新 role，角色一旦变更键就变了，
+    // 拆分部署下另一进程改的角色在本进程立即生效，不会出现 TTL 内的旧权限窗口。
+    const key = `${user.id}:${user.role}:${permission}`;
     const cached = this.permCache.get(key);
     const now = Date.now();
     if (cached && cached.expiresAt > now) return cached.allowed;
